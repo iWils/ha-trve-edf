@@ -1,0 +1,7 @@
+{
+  "name": "Tarifs réglementés EDF (TRVE)",
+  "country": "FR",
+  "homeassistant": "2025.1.0",
+  "zip_release": true,
+  "filename": "trve_edf.zip"
+}

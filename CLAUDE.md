@@ -50,7 +50,27 @@ from official open data (CRE prices, RTE Tempo colors).
   real Home Assistant instance.
 - A release is published automatically when `main` holds a `manifest.json` version
   without tag: bump `version` and add its dated `## [x.y.z] - YYYY-MM-DD` section to
-  `CHANGELOG.md` in the same pull request.
+  `CHANGELOG.md` in the same pull request. A version without dated section is
+  simply not released yet.
 
-The test, lint and release tooling arrives with the scaffold pull request; this file
-will then list the exact commands.
+## Commands
+
+Python 3.13. Install the tools once:
+
+```bash
+pip install -r requirements_test.txt -r requirements_lint.txt
+```
+
+Run before every push (the CI runs the same checks):
+
+```bash
+ruff check .
+ruff format --check .
+mypy
+pytest
+```
+
+- `pytest` measures the coverage and fails below 90 %.
+- `mypy` runs in strict mode on `custom_components`, `tests` and `.github/scripts`.
+- Validation of the integration (hassfest, HACS Action) only runs in the CI
+  (`.github/workflows/validate.yml`).

@@ -1,0 +1,14 @@
+{
+  "domain": "trve_edf",
+  "name": "Tarifs réglementés EDF (TRVE)",
+  "codeowners": [
+    "@iWils"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/iWils/ha-trve-edf",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/iWils/ha-trve-edf/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

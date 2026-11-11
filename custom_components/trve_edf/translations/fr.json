@@ -1,0 +1,7 @@
+{
+  "config": {
+    "abort": {
+      "not_available_yet": "Cette intégration est en cours de développement : la configuration des contrats n'est pas encore disponible."
+    }
+  }
+}

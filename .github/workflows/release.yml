@@ -1,0 +1,89 @@
+name: Release
+
+# Publishes a release when main holds a version that is ready and has no tag.
+# A version is ready once CHANGELOG.md has its dated "## [x.y.z] - YYYY-MM-DD"
+# section: bump "version" in custom_components/trve_edf/manifest.json, add that
+# section, then merge into main.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Decide whether the manifest version is released
+        id: version
+        run: |
+          version=$(jq -r '.version' custom_components/trve_edf/manifest.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$version" > /dev/null; then
+            echo "Tag $version already exists: nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          status=0
+          python3 .github/scripts/release_notes.py "$version" > /dev/null || status=$?
+          case "$status" in
+            0)
+              echo "Version $version is ready: it will be released."
+              echo "release=true" >> "$GITHUB_OUTPUT"
+              ;;
+            1)
+              echo "Version $version has no dated changelog section yet: nothing to release."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::The changelog section of $version is invalid (exit code $status)."
+              exit 1
+              ;;
+          esac
+
+  tests:
+    name: Tests
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    uses: ./.github/workflows/tests.yml
+
+  release:
+    name: Publish release
+    needs: [check, tests]
+    if: needs.check.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Release notes from the changelog
+        run: python3 .github/scripts/release_notes.py "$VERSION" > release_notes.md
+      - name: Build the archive installed by HACS
+        run: |
+          cd custom_components/trve_edf
+          zip -r "$GITHUB_WORKSPACE/trve_edf.zip" .
+      # A release created with GITHUB_TOKEN does not trigger other workflows,
+      # so the archive is built and attached here.
+      - name: Create the tag and the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" trve_edf.zip \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --notes-file release_notes.md

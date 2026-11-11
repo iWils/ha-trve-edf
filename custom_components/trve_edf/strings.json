@@ -1,0 +1,7 @@
+{
+  "config": {
+    "abort": {
+      "not_available_yet": "This integration is under development: contracts cannot be configured yet."
+    }
+  }
+}
