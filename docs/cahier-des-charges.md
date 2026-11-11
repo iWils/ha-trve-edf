@@ -1,6 +1,7 @@
 # Cahier des charges — ha-trve-edf
 
-> Statut : **validé** · Version du document : 1.0 · 11 novembre 2026
+> Statut : **validé** jusqu'à la version 1.0 ; version 1.1 (sections 4.2, 6.2 et
+> 6.3, pour Tempo) **à valider** · 11 novembre 2026
 >
 > Ce document décrit ce que fait l'intégration et comment elle est conçue. Il fait
 > référence pour tout développement, humain ou assisté par IA. Toute évolution du
@@ -106,8 +107,10 @@ exige un compte : elle n'est pas utilisable sans configuration. Décision :
   sur data.gouv.fr, gratuite, sans clé, licence ouverte. Elle redistribue les
   couleurs publiées par RTE. L'intégration lit son fichier `tempo-historique.csv`
   (colonnes `date`, `couleur`, `saison` ; une ligne par jour depuis 2014), qui
-  contient aussi le jour même et le lendemain dès sa publication, et dont le format
-  a été vérifié sur data.gouv.fr.
+  contient aussi le jour même et, d'après sa documentation, le lendemain dès sa
+  publication. Son format (colonnes, dates, couleurs) a été vérifié sur
+  data.gouv.fr. Si ce fichier est valide mais incomplet, les couleurs manquantes
+  sont demandées à la source de secours.
 - **Source de secours** : une seconde API communautaire sans clé (par exemple
   api-couleur-tempo.fr), interrogée seulement si la principale échoue.
 - **Plus tard, en option** : l'API officielle RTE avec les identifiants de
@@ -164,7 +167,7 @@ fondés sur l'entrée de configuration.
 | Prix heures pleines, prix heures creuses | capteurs | €/kWh | HP/HC |
 | Prix bleu, blanc, rouge × heures pleines, heures creuses (6) | capteurs | €/kWh | Tempo |
 | Couleur Tempo en cours (journée de 6 h à 6 h) | capteur à états | — | Tempo |
-| Couleur Tempo d'hier, d'aujourd'hui, de demain | capteurs à états (dont « inconnue ») | — | Tempo |
+| Couleur Tempo d'hier, d'aujourd'hui, de demain (demain : « inconnue » tant qu'elle n'est pas publiée ; hier et aujourd'hui : indisponibles si inconnues) | capteurs à états | — | Tempo |
 
 ### 6.3 Mises à jour
 

@@ -65,7 +65,7 @@ Several contracts can be added, for example for several homes.
 | Blue, white, red × peak, off-peak hours prices | Tempo | The 6 Tempo prices of the kWh |
 | Next price change | HP/HC, Tempo | Date and time of the next change: peak/off-peak switch, or new tariff grid at midnight |
 | Current Tempo color | Tempo | Color of the current Tempo day, from 06:00 to 06:00 the next day |
-| Yesterday's, today's, tomorrow's Tempo color | Tempo | "Unknown" until the color is published (tomorrow's, around 11:00) |
+| Yesterday's, today's, tomorrow's Tempo color | Tempo | Tomorrow's stays "Unknown" until published (around 11:00); yesterday's and today's are unavailable if missing |
 
 For the Energy dashboard, choose "Use an entity with current price" and select the
 "Current price" sensor.

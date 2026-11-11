@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 import logging
@@ -16,13 +17,26 @@ from homeassistant.util import dt as dt_util
 from .api import TrveEdfError, async_fetch_tempo_colors
 from .const import DOMAIN
 from .models import TempoColor
-from .pricing import PARIS, next_tempo_refresh, tempo_days_missing
+from .pricing import (
+    PARIS,
+    TEMPO_RETRY_INTERVAL,
+    next_tempo_refresh,
+    tempo_days_missing,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 COLORS_KEPT = timedelta(days=7)
 """Known colors older than this are forgotten."""
+
+REFRESH_MARGIN = timedelta(seconds=2)
+"""Delay added to each scheduled refresh.
+
+Home Assistant may run a scheduled refresh up to about a second early: without
+this margin, a refresh planned for 10:30 could run at 10:29:59, find nothing to
+ask yet and plan itself again a fraction of a second later, over and over.
+"""
 
 DATA_TEMPO_COLORS = "tempo_colors"
 """Key of the shared coordinator in ``hass.data[DOMAIN]``."""
@@ -44,20 +58,33 @@ class TempoColorsCoordinator(DataUpdateCoordinator[dict[date, TempoColor]]):
             _LOGGER,
             config_entry=None,
             name=f"{DOMAIN} Tempo colors",
-            update_interval=None,
+            update_interval=TEMPO_RETRY_INTERVAL,
         )
         self._store: Store[dict[str, str]] = Store(
             hass, STORAGE_VERSION, f"{DOMAIN}.tempo_colors"
         )
         self.users = 0
+        self.started = asyncio.Event()
         self._failing = False
+
+    async def async_start(self) -> None:
+        """Publish the saved colors at once, then get the missing ones.
+
+        The missing colors are asked for in the background, so that the setup of
+        the contracts never waits for the network.
+        """
+        try:
+            self.async_set_updated_data(await self._async_load(dt_util.utcnow()))
+        finally:
+            self.started.set()
+        self.hass.async_create_background_task(
+            self.async_refresh(), f"{DOMAIN} Tempo colors first refresh"
+        )
 
     async def _async_update_data(self) -> dict[date, TempoColor]:
         """Get the missing Tempo colors, keeping the known ones."""
         now = dt_util.utcnow()
-        colors = (
-            dict(self.data) if self.data is not None else await self._async_load(now)
-        )
+        colors = dict(self.data or {})
         if missing := tempo_days_missing(now, colors):
             try:
                 fetched = await async_fetch_tempo_colors(
@@ -78,12 +105,16 @@ class TempoColorsCoordinator(DataUpdateCoordinator[dict[date, TempoColor]]):
                     await self._store.async_save(
                         {day.isoformat(): color.value for day, color in colors.items()}
                     )
-        self.update_interval = next_tempo_refresh(now, colors) - now
+        self.update_interval = next_tempo_refresh(now, colors) - now + REFRESH_MARGIN
         return colors
 
     async def _async_load(self, now: datetime) -> dict[date, TempoColor]:
         """Return the saved colors that are still useful."""
-        saved: Any = await self._store.async_load()
+        try:
+            saved: Any = await self._store.async_load()
+        except Exception as err:
+            _LOGGER.warning("Cannot read the saved Tempo colors: %s", err)
+            saved = None
         colors: dict[date, TempoColor] = {}
         if isinstance(saved, dict):
             for day, color in saved.items():
@@ -100,23 +131,36 @@ def _recent(colors: Mapping[date, TempoColor], now: datetime) -> dict[date, Temp
 
 
 async def async_acquire_tempo_colors(hass: HomeAssistant) -> TempoColorsCoordinator:
-    """Return the shared coordinator of the Tempo colors, creating it if needed."""
+    """Return the shared coordinator of the Tempo colors, starting it if needed.
+
+    It returns once the saved colors are published, without waiting for the
+    network. Each call must be balanced by ``async_release_tempo_colors``.
+    """
     domain_data: dict[str, Any] = hass.data.setdefault(DOMAIN, {})
     coordinator: TempoColorsCoordinator | None = domain_data.get(DATA_TEMPO_COLORS)
     if coordinator is None:
         coordinator = TempoColorsCoordinator(hass)
         domain_data[DATA_TEMPO_COLORS] = coordinator
-        coordinator.users += 1
-        await coordinator.async_refresh()
+        try:
+            await coordinator.async_start()
+        except BaseException:
+            if domain_data.get(DATA_TEMPO_COLORS) is coordinator:
+                del domain_data[DATA_TEMPO_COLORS]
+            raise
     else:
-        coordinator.users += 1
+        await coordinator.started.wait()
+    coordinator.users += 1
     return coordinator
 
 
-async def async_release_tempo_colors(hass: HomeAssistant) -> None:
+async def async_release_tempo_colors(
+    hass: HomeAssistant, coordinator: TempoColorsCoordinator
+) -> None:
     """Stop the shared coordinator of the Tempo colors once no contract uses it."""
-    coordinator: TempoColorsCoordinator = hass.data[DOMAIN][DATA_TEMPO_COLORS]
     coordinator.users -= 1
-    if coordinator.users == 0:
-        del hass.data[DOMAIN][DATA_TEMPO_COLORS]
-        await coordinator.async_shutdown()
+    if coordinator.users > 0:
+        return
+    domain_data: dict[str, Any] = hass.data.get(DOMAIN, {})
+    if domain_data.get(DATA_TEMPO_COLORS) is coordinator:
+        del domain_data[DATA_TEMPO_COLORS]
+    await coordinator.async_shutdown()

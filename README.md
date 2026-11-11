@@ -66,7 +66,7 @@ Plusieurs contrats peuvent être ajoutés, par exemple pour plusieurs logements.
 | Prix bleu, blanc, rouge × heures pleines, heures creuses | Tempo | Les 6 prix du kWh Tempo |
 | Prochain changement de prix | HP/HC, Tempo | Date et heure du prochain changement : passage HP/HC, ou nouvelle grille tarifaire à minuit |
 | Couleur Tempo en cours | Tempo | Couleur de la journée Tempo en cours, de 6 h à 6 h le lendemain |
-| Couleur Tempo d'hier, d'aujourd'hui, de demain | Tempo | « Inconnu » tant que la couleur n'est pas publiée (celle de demain, vers 11 h) |
+| Couleur Tempo d'hier, d'aujourd'hui, de demain | Tempo | Celle de demain reste « Inconnu » tant qu'elle n'est pas publiée (vers 11 h) ; hier et aujourd'hui sont indisponibles si leur couleur manque |
 
 Pour le tableau de bord Énergie, choisissez « Utiliser une entité avec le prix
 actuel » et sélectionnez le capteur « Prix actuel ».

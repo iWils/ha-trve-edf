@@ -173,10 +173,10 @@ SENSORS: tuple[TrveEdfSensorDescription, ...] = (
     ),
     _color_description("tempo_color", _tempo_color, unknown_is_a_state=False),
     _color_description(
-        "tempo_color_yesterday", _tempo_color_of_day(-1), unknown_is_a_state=True
+        "tempo_color_yesterday", _tempo_color_of_day(-1), unknown_is_a_state=False
     ),
     _color_description(
-        "tempo_color_today", _tempo_color_of_day(0), unknown_is_a_state=True
+        "tempo_color_today", _tempo_color_of_day(0), unknown_is_a_state=False
     ),
     _color_description(
         "tempo_color_tomorrow", _tempo_color_of_day(1), unknown_is_a_state=True
@@ -227,8 +227,8 @@ class TrveEdfSensor(TrveEdfEntity, SensorEntity):
         """Return whether the sensor has a state now.
 
         A value that cannot be known for sure makes the sensor unavailable, except
-        for the sensors whose unknown value is a normal state (Tempo colors of a
-        calendar day, not published yet).
+        for the sensors whose unknown value is a normal state: the color of
+        tomorrow is unknown until it is published.
         """
         return self.entity_description.unknown_is_a_state or (
             self.native_value is not None

@@ -13,8 +13,9 @@ affect any price: when the caller gives the current day, such a row is skipped
 and logged instead.
 
 The Tempo colors published by RTE are read from the history of Jour Tempo, a CSV
-file with one line per day. When it cannot be used, the colors are read from
-api-couleur-tempo.fr instead, one request per day.
+file with one line per day, and the days missing from it are asked to
+api-couleur-tempo.fr, one request per day. When the history cannot be used, every
+day is asked to api-couleur-tempo.fr instead.
 """
 
 from __future__ import annotations
@@ -116,6 +117,13 @@ _FALLBACK_COLORS: Final[Mapping[int, TempoColor | None]] = {
     3: TempoColor.RED,
 }
 """Tempo color of each day code of the fallback source; 0 is not known yet."""
+
+_history_failing = False
+"""Whether the last download of the Jour Tempo history failed.
+
+Shared by every caller, so that an outage of the history is logged as a warning
+once, not at each download.
+"""
 
 _BOM: Final = "﻿"
 _FRENCH_DATE: Final = re.compile(
@@ -237,13 +245,21 @@ async def async_fetch_tempo_colors(
 ) -> dict[date, TempoColor]:
     """Download the known Tempo colors of some days.
 
-    The colors are read from the Jour Tempo history. When it cannot be
-    downloaded or is invalid, a warning is logged and each day is asked to
-    api-couleur-tempo.fr instead. A body is decoded as UTF-8 (with or without
-    byte order mark); the history may also be Windows-1252 text. The colors are
-    taken from one source only, and an error never gives partial colors. When
-    the fallback source fails too, its error is raised while handling the error
-    of the history, which is its context: the traceback shows both.
+    The colors are read from the Jour Tempo history. The days missing from it
+    are then asked to api-couleur-tempo.fr, as a complement: when that fails,
+    the colors of the history are returned alone, and the failure is logged at
+    debug level.
+
+    When the history cannot be downloaded or is invalid, none of it is kept and
+    every day is asked to api-couleur-tempo.fr instead. The first failure of an
+    outage of the history is logged as a warning, the next ones at debug level,
+    and its end at info level. When the fallback source fails too, its error is
+    raised while handling the error of the history, which is its context: the
+    traceback shows both.
+
+    A body is decoded as UTF-8 (with or without byte order mark); the history
+    may also be Windows-1252 text. An error of a source never gives partial
+    colors of that source.
 
     Args:
         session: HTTP session used for the requests.
@@ -264,10 +280,17 @@ async def async_fetch_tempo_colors(
     if not wanted:
         return {}
     try:
-        return await _async_fetch_history(session, wanted)
+        colors = await _async_fetch_history(session, wanted)
     except (TempoConnectionError, TempoDataError) as err:
-        _LOGGER.warning("%s; using api-couleur-tempo.fr instead", err)
+        _history_failed(err)
         return await _async_fetch_fallback(session, wanted)
+    _history_worked()
+    if missing := tuple(day for day in wanted if day not in colors):
+        try:
+            colors |= await _async_fetch_fallback(session, missing)
+        except (TempoConnectionError, TempoDataError) as err:
+            _LOGGER.debug("%s; keeping the colors of the %s alone", err, _HISTORY)
+    return colors
 
 
 def parse_tempo_history(text: str, days: Sequence[date]) -> dict[date, TempoColor]:
@@ -574,6 +597,25 @@ def _parse_amount(column: str, text: str) -> Decimal:
 
 
 # Tempo colors.
+
+
+def _history_failed(err: TrveEdfError) -> None:
+    """Log a failure of the history: a warning only at the start of an outage."""
+    global _history_failing
+    _LOGGER.log(
+        logging.DEBUG if _history_failing else logging.WARNING,
+        "%s; using api-couleur-tempo.fr instead",
+        err,
+    )
+    _history_failing = True
+
+
+def _history_worked() -> None:
+    """Note that the history works, and log the end of an outage."""
+    global _history_failing
+    if _history_failing:
+        _LOGGER.info("The %s can be used again", _HISTORY)
+        _history_failing = False
 
 
 async def _async_fetch_history(

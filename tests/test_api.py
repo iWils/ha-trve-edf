@@ -22,6 +22,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMocker,
 )
 
+from custom_components.trve_edf import api
 from custom_components.trve_edf.api import (
     CRE_GRID_URLS,
     FALLBACK_TEMPO_URL,
@@ -273,13 +274,18 @@ def fixture_columns(name: str) -> list[str]:
     return read_fixture(name).splitlines()[0].split(";")
 
 
-def warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Return the warnings logged by the client."""
+def logged(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
+    """Return the messages logged by the client at a level."""
     return [
         record.getMessage()
         for record in caplog.records
-        if record.name == API_LOGGER and record.levelno == logging.WARNING
+        if record.name == API_LOGGER and record.levelno == level
     ]
+
+
+def warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the warnings logged by the client."""
+    return logged(caplog, logging.WARNING)
 
 
 def csv_text(*lines: str) -> str:
@@ -1396,6 +1402,16 @@ FIXTURE_COLORS = {
 """Content of the history fixture."""
 
 FALLBACK_LABELS = {1: "Bleu", 2: "Blanc", 3: "Rouge"}
+COMPLEMENT_IGNORED = "; keeping the colors of the Jour Tempo history alone"
+"""End of the debug message of a failed complement of the history."""
+USING_FALLBACK = "; using api-couleur-tempo.fr instead"
+"""End of the message of a failure of the history."""
+
+
+@pytest.fixture(autouse=True)
+def reset_history_outage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start each test without a known outage of the Jour Tempo history."""
+    monkeypatch.setattr(api, "_history_failing", False)
 
 
 def history_text(*lines: str, header: str = HISTORY_HEADER) -> str:
@@ -1428,6 +1444,13 @@ def mock_fallback(
         codes = {YESTERDAY: 1, TODAY: 1, TOMORROW: 0}
     for day, code in codes.items():
         aioclient_mock.get(fallback_url(day), json=fallback_answer(day, code))
+
+
+def mock_sources(aioclient_mock: AiohttpClientMocker, **history: object) -> None:
+    """Mock the history with the given answer, and the fallback as mock_fallback."""
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, **history)
+    mock_fallback(aioclient_mock)
 
 
 def requested_urls(aioclient_mock: AiohttpClientMocker) -> list[str]:
@@ -1730,16 +1753,21 @@ async def test_fetch_tempo_colors(
     aioclient_mock: AiohttpClientMocker,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The colors of the requested days are read from the Jour Tempo history."""
+    """A history with every requested day is the only source asked."""
     aioclient_mock.get(
         JOUR_TEMPO_HISTORY_URL, content=(FIXTURES / HISTORY_FIXTURE).read_bytes()
     )
+    mock_fallback(aioclient_mock)
+    caplog.set_level(logging.DEBUG, logger=API_LOGGER)
 
-    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+    colors = await async_fetch_tempo_colors(
+        async_get_clientsession(hass), list(KNOWN_COLORS)
+    )
 
     assert colors == KNOWN_COLORS
     assert requested_urls(aioclient_mock) == [JOUR_TEMPO_HISTORY_URL]
     assert warnings(caplog) == []
+    assert logged(caplog, logging.INFO) == []
 
 
 async def test_fetch_tempo_colors_without_days(
@@ -1807,9 +1835,9 @@ async def test_fetch_tempo_colors_encodings(
     """The history is read as UTF-8, with or without BOM, else as Windows-1252."""
     aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, content=content)
 
-    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), [YESTERDAY])
 
-    assert colors[YESTERDAY] is TempoColor.BLUE
+    assert colors == {YESTERDAY: TempoColor.BLUE}
     assert aioclient_mock.call_count == 1
 
 
@@ -1827,7 +1855,7 @@ async def test_fetch_tempo_colors_windows_1252_is_logged(
     aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, content=content)
     caplog.set_level("DEBUG", logger=API_LOGGER)
 
-    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), [TODAY])
 
     assert colors == {TODAY: TempoColor.RED}
     assert "Jour Tempo history decoded as Windows-1252" in caplog.text
@@ -2285,16 +2313,202 @@ async def test_fallback_stops_at_the_first_error(
     ]
 
 
-async def test_valid_history_is_not_completed_by_the_fallback(
+async def test_stale_history_is_completed_by_the_fallback(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The days missing from a valid history, and only them, are asked elsewhere."""
+    aioclient_mock.get(
+        JOUR_TEMPO_HISTORY_URL,
+        content=history_text("2026-11-10,bleu,2026-2027").encode(),
+    )
+    mock_fallback(aioclient_mock, {YESTERDAY: 2, TODAY: 1, TOMORROW: 3})
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert colors == {
+        YESTERDAY: TempoColor.BLUE,
+        TODAY: TempoColor.BLUE,
+        TOMORROW: TempoColor.RED,
+    }
+    assert requested_urls(aioclient_mock) == [
+        JOUR_TEMPO_HISTORY_URL,
+        fallback_url(TODAY),
+        fallback_url(TOMORROW),
+    ]
+    assert warnings(caplog) == []
+
+
+async def test_missing_day_unknown_to_the_fallback(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
-    """A valid history is the only source, even when a day is not published yet."""
+    """A missing day that the fallback does not know yet stays absent."""
     aioclient_mock.get(
         JOUR_TEMPO_HISTORY_URL, content=(FIXTURES / HISTORY_FIXTURE).read_bytes()
     )
-    mock_fallback(aioclient_mock, {TOMORROW: 2})
+    mock_fallback(aioclient_mock)
 
     colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
 
     assert colors == KNOWN_COLORS
-    assert requested_urls(aioclient_mock) == [JOUR_TEMPO_HISTORY_URL]
+    assert requested_urls(aioclient_mock) == [
+        JOUR_TEMPO_HISTORY_URL,
+        fallback_url(TOMORROW),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [
+        pytest.param(
+            {"status": HTTPStatus.INTERNAL_SERVER_ERROR},
+            "could not be downloaded: HTTP status 500",
+            id="HTTP 500",
+        ),
+        pytest.param(
+            {"exc": aiohttp.ClientConnectionError("Connection refused")},
+            "could not be downloaded: Connection refused",
+            id="connection",
+        ),
+        pytest.param(
+            {"exc": TimeoutError()},
+            "could not be downloaded: TimeoutError",
+            id="timeout",
+        ),
+        pytest.param(
+            {"content": b"<html></html>"},
+            "is not valid JSON: Expecting value: line 1 column 1 (char 0)",
+            id="invalid JSON",
+        ),
+        pytest.param(
+            {"json": fallback_answer(TODAY, 1)},
+            "is for another day: dateJour is '2026-11-11'",
+            id="another day",
+        ),
+        pytest.param(
+            {"json": fallback_answer(TOMORROW, 7)},
+            "has an invalid codeJour: 7",
+            id="invalid code",
+        ),
+    ],
+)
+async def test_failed_complement_is_ignored(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    answer: dict[str, object],
+    reason: str,
+) -> None:
+    """When the complement fails, the colors of the valid history are kept alone."""
+    aioclient_mock.get(
+        JOUR_TEMPO_HISTORY_URL, content=(FIXTURES / HISTORY_FIXTURE).read_bytes()
+    )
+    aioclient_mock.get(fallback_url(TOMORROW), **answer)
+    caplog.set_level(logging.DEBUG, logger=API_LOGGER)
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert colors == KNOWN_COLORS
+    assert warnings(caplog) == []
+    assert (
+        f"The Tempo color of 2026-11-12 from api-couleur-tempo.fr {reason}"
+        f"{COMPLEMENT_IGNORED}"
+    ) in logged(caplog, logging.DEBUG)
+
+
+async def test_failed_complement_gives_no_partial_colors(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A failed complement adds none of its colors, even of the days before."""
+    aioclient_mock.get(
+        JOUR_TEMPO_HISTORY_URL,
+        content=history_text("2026-11-10,bleu,2026-2027").encode(),
+    )
+    aioclient_mock.get(fallback_url(TODAY), json=fallback_answer(TODAY, 2))
+    aioclient_mock.get(fallback_url(TOMORROW), status=HTTPStatus.SERVICE_UNAVAILABLE)
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert colors == {YESTERDAY: TempoColor.BLUE}
+    assert requested_urls(aioclient_mock) == [
+        JOUR_TEMPO_HISTORY_URL,
+        fallback_url(TODAY),
+        fallback_url(TOMORROW),
+    ]
+
+
+# Tempo colors: logging of an outage of the history.
+
+
+async def test_history_outage_is_warned_once(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """While the history keeps failing, only its first failure is a warning."""
+    session = async_get_clientsession(hass)
+    caplog.set_level(logging.DEBUG, logger=API_LOGGER)
+
+    for answer in (
+        {"status": HTTPStatus.INTERNAL_SERVER_ERROR},
+        {"content": b"<html></html>"},
+        {"exc": TimeoutError()},
+    ):
+        mock_sources(aioclient_mock, **answer)
+        assert await async_fetch_tempo_colors(session, DAYS) == KNOWN_COLORS
+
+    assert warnings(caplog) == [
+        f"The Jour Tempo history could not be downloaded: HTTP status 500"
+        f"{USING_FALLBACK}"
+    ]
+    assert [
+        message
+        for message in logged(caplog, logging.DEBUG)
+        if USING_FALLBACK in message
+    ] == [
+        f"The Jour Tempo history lacks the required columns: date, couleur"
+        f"{USING_FALLBACK}",
+        f"The Jour Tempo history could not be downloaded: TimeoutError{USING_FALLBACK}",
+    ]
+
+
+async def test_history_outage_when_the_fallback_fails_too(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An outage of both sources is warned once too."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, status=HTTPStatus.BAD_GATEWAY)
+    aioclient_mock.get(fallback_url(TODAY), status=HTTPStatus.BAD_GATEWAY)
+    session = async_get_clientsession(hass)
+
+    for _ in range(2):
+        with pytest.raises(TempoConnectionError):
+            await async_fetch_tempo_colors(session, [TODAY])
+
+    assert len(warnings(caplog)) == 1
+
+
+async def test_history_outage_is_warned_again_after_recovery(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Once the history has worked, its next failure is a warning again."""
+    session = async_get_clientsession(hass)
+    caplog.set_level(logging.DEBUG, logger=API_LOGGER)
+    failure = {"status": HTTPStatus.INTERNAL_SERVER_ERROR}
+    history = {"content": (FIXTURES / HISTORY_FIXTURE).read_bytes()}
+
+    for answer in (failure, failure, history, history, failure, failure):
+        mock_sources(aioclient_mock, **answer)
+        assert await async_fetch_tempo_colors(session, DAYS) == KNOWN_COLORS
+
+    warning = (
+        f"The Jour Tempo history could not be downloaded: HTTP status 500"
+        f"{USING_FALLBACK}"
+    )
+    assert warnings(caplog) == [warning, warning]
+    assert logged(caplog, logging.INFO) == ["The Jour Tempo history can be used again"]
+    assert logged(caplog, logging.DEBUG).count(warning) == 2

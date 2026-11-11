@@ -16,18 +16,16 @@ The Tempo option.
   off-peak hours are fixed nationally (22:00-06:00), nothing to enter.
 - Tempo sensors: the 6 prices (blue, white, red, in peak and off-peak hours), the
   color of the current Tempo day (06:00 to 06:00) and the colors of yesterday, today
-  and tomorrow ("unknown" until published). The current price, current period and
-  next price change also cover Tempo.
-- Tempo colors from Jour Tempo (RTE data redistributed as open data), with a
-  fallback source. Only missing colors are asked for: yesterday, today and, from
-  10:30 the day before, tomorrow, every 15 minutes while one is missing. Known
-  colors are saved, shared by all the Tempo contracts and never asked again.
-
-### Changed
-- The current price of a Tempo contract is unavailable while the color of the current
-  Tempo day is unknown, rather than possibly wrong.
-- Prices of a tariff row are keyed by price (one per period, and per color for
-  Tempo); grids saved by 0.1.0 are still read.
+  and tomorrow. The current price, current period and next price change also cover
+  Tempo.
+- Accuracy first for Tempo: the current price and the current color are unavailable
+  while the color of the current Tempo day is unknown; yesterday's and today's colors
+  are unavailable when missing, tomorrow's is "unknown" until published.
+- Tempo colors from Jour Tempo (RTE data redistributed as open data), completed by a
+  fallback source when it fails or lacks a day. Only missing colors are asked for:
+  yesterday, today and, from 10:30 the day before, tomorrow, every 15 minutes while
+  one is missing. Known colors are saved, shared by all the Tempo contracts, shown
+  at once on startup and never asked again; the setup never waits for the network.
 
 ## [0.1.0] - 2026-11-11
 
