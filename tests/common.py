@@ -35,9 +35,9 @@ PREVIOUS_END = date(2026, 7, 31)
 CURRENT_START = date(2026, 8, 1)
 
 
-def paris(*args: int) -> datetime:
+def paris(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
     """Return an aware datetime in French time."""
-    return datetime(*args, tzinfo=PARIS)
+    return datetime(year, month, day, hour, minute, tzinfo=PARIS)
 
 
 def _row(

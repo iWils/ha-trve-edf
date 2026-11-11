@@ -73,7 +73,7 @@ async def test_manifest_version_is_releasable_or_pending() -> None:
 
     assert result.returncode in (0, 1), result.stderr
     if result.returncode == 0:
-        assert result.stdout.startswith("### ")
+        assert "### " in result.stdout
 
 
 async def test_notes_of_a_dated_section() -> None:

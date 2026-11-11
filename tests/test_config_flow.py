@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
-from homeassistant.config_entries import SOURCE_USER
+from homeassistant.config_entries import SOURCE_USER, ConfigFlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 import pytest
@@ -37,7 +37,7 @@ def _now(freezer: FrozenDateTimeFactory) -> None:
     freezer.move_to(paris(2026, 11, 11, 12, 0))
 
 
-async def _start(hass: HomeAssistant, option: TariffOption) -> dict:
+async def _start(hass: HomeAssistant, option: TariffOption) -> ConfigFlowResult:
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
@@ -54,7 +54,9 @@ async def test_base_contract(hass: HomeAssistant) -> None:
         result = await _start(hass, TariffOption.BASE)
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "power"
-    options = result["data_schema"].schema[CONF_POWER].config["options"]
+    schema = result["data_schema"]
+    assert schema is not None
+    options = schema.schema[CONF_POWER].config["options"]
     assert options == [
         {"value": "3", "label": "3 kVA"},
         {"value": "6", "label": "6 kVA"},
