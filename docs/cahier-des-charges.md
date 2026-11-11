@@ -1,6 +1,6 @@
 # Cahier des charges — ha-trve-edf
 
-> Statut : **brouillon à valider** · Version du document : 0.1 · 11 novembre 2026
+> Statut : **validé** · Version du document : 1.0 · 11 novembre 2026
 >
 > Ce document décrit ce que fait l'intégration et comment elle est conçue. Il fait
 > référence pour tout développement, humain ou assisté par IA. Toute évolution du
@@ -46,7 +46,7 @@ Elle sert à suivre le coût réel de sa consommation et à piloter des automati
 
 ### 3.2 Les « différents contrats EDF »
 
-| Contrat | Statut | Données officielles ouvertes | Décision proposée |
+| Contrat | Statut | Données officielles ouvertes | Décision |
 |---|---|---|---|
 | Base, HP/HC, Tempo | TRVE ouverts | Oui (CRE) | **1.0** |
 | EJP | TRVE fermé aux nouveaux clients depuis 1998, encore actif pour certains | Jours EJP oui (calendrier EDF, redistribué par jourtempo.fr), prix **non** publiés par la CRE | Après 1.0, si une source de prix fiable existe |
@@ -96,7 +96,7 @@ une sans toucher au reste.
 ### 4.2 Couleurs Tempo
 
 La source officielle est l'API « Tempo Like Supply Contract » de RTE, mais elle
-exige un compte : elle n'est pas utilisable sans configuration. Proposition :
+exige un compte : elle n'est pas utilisable sans configuration. Décision :
 
 - **Source principale : API Jour Tempo** (`https://jourtempo.fr/api/v1/`),
   référencée sur data.gouv.fr, gratuite, sans clé, licence ouverte. Elle
@@ -152,7 +152,7 @@ fondés sur l'entrée de configuration.
 |---|---|---|---|
 | Prix actuel | capteur | €/kWh | toutes |
 | Période tarifaire actuelle (base / heures pleines / heures creuses) | capteur à états | — | toutes |
-| Prochain changement de prix (proposé) | horodatage | — | HP/HC, Tempo |
+| Prochain changement de prix | horodatage | — | HP/HC, Tempo |
 | Abonnement | capteur | €/an | toutes |
 | Prix Base | capteur | €/kWh | Base |
 | Prix heures pleines, prix heures creuses | capteurs | €/kWh | HP/HC |
@@ -203,7 +203,7 @@ custom_components/trve_edf/
 - Les accès réseau sont concentrés dans `api.py`, ce qui permet de changer de
   source sans toucher au reste.
 - Les entités sont décrites de façon déclarative (une description par entité).
-- Version minimale de Home Assistant : **2025.1** (à confirmer).
+- Version minimale de Home Assistant : **2025.1**.
 
 ## 8. Qualité et outillage
 
@@ -245,13 +245,15 @@ Pour garantir un code neuf, sans reprise du projet `hass-tarif-edf` :
   bugs de l'ancienne intégration, sous forme de cas de test ;
 - le code est écrit à partir de ce cahier des charges.
 
-## 12. Questions ouvertes
+## 12. Décisions
 
-1. Confirmer le périmètre 1.0 : Base, HP/HC et Tempo ; EJP plus tard ; offres de
-   marché hors périmètre.
-2. Valider les sources Tempo : Jour Tempo en principal, une autre API communautaire
-   en secours.
-3. Abonnement exprimé en €/an (valeur officielle) ou converti en €/mois ?
-4. Garder l'entité « Prochain changement de prix » ?
-5. Heures creuses Tempo fixes (22 h - 6 h), non modifiables : d'accord ?
-6. Version minimale de Home Assistant 2025.1 : d'accord ?
+Validées par le mainteneur le 11 novembre 2026 :
+
+1. Périmètre 1.0 : Base, HP/HC et Tempo. EJP éventuellement après la 1.0 ; offres
+   de marché hors périmètre.
+2. Sources Tempo : Jour Tempo en source principale, une autre API communautaire
+   sans clé en secours.
+3. Abonnement exprimé en €/an, la valeur officielle de la grille.
+4. L'entité « Prochain changement de prix » fait partie de la 1.0.
+5. Heures creuses Tempo fixes, de 22 h à 6 h, non modifiables.
+6. Version minimale de Home Assistant : 2025.1.
