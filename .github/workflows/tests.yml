@@ -39,3 +39,17 @@ jobs:
         run: pip install -r requirements_test.txt
       - name: Run the tests
         run: pytest
+
+  pytest-min:
+    # Oldest Home Assistant release supported, declared in hacs.json.
+    name: Pytest (Home Assistant 2025.1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install -r requirements_test_min.txt
+      - name: Run the tests
+        run: pytest

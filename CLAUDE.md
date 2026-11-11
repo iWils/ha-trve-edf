@@ -47,6 +47,10 @@ from official open data (CRE prices, RTE Tempo colors).
 
 - Every behavior change comes with tests.
 - Conventional commits (`feat:`, `fix:`, `docs:`, `ci:`, `refactor:`, `test:`…).
+- No AI attribution anywhere: no `Co-Authored-By`, session links or "Generated
+  with/by" mentions in commits, pull requests or release notes. Commits are signed
+  with the maintainer's GitHub identity
+  (`iWils <56263502+iWils@users.noreply.github.com>`).
 - Work on a branch and open a pull request to `main`; never push to `main` directly.
 - Versions follow SemVer: `0.x` during development, `1.0.0` after validation on a
   real Home Assistant instance.
@@ -73,6 +77,10 @@ pytest
 ```
 
 - `pytest` measures the coverage and fails below 90 %.
+- The CI also runs the tests on the oldest supported Home Assistant (2025.1). To do
+  the same locally, use a separate virtualenv outside the repository:
+  `python3.13 -m venv ../venv-ha2025.1 && ../venv-ha2025.1/bin/pip install -r requirements_test_min.txt`,
+  then `../venv-ha2025.1/bin/python -m pytest`.
 - `mypy` runs in strict mode on `custom_components`, `tests` and `.github/scripts`.
 - Validation of the integration (hassfest, HACS Action) only runs in the CI
   (`.github/workflows/validate.yml`).

@@ -8,12 +8,14 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from homeassistant.components.sensor import (
+    DOMAIN as SENSOR_DOMAIN,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
@@ -189,12 +191,24 @@ async def async_setup_entry(
     entry: TrveEdfConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Add the sensors of a contract."""
+    """Add the sensors of a contract.
+
+    After a reconfiguration to another option, the sensors of the former option are
+    removed from the entity registry.
+    """
     coordinator = entry.runtime_data
-    async_add_entities(
-        TrveEdfSensor(coordinator, description)
+    descriptions = [
+        description
         for description in SENSORS
         if coordinator.option in description.options_supported
+    ]
+    kept = {f"{entry.entry_id}_{description.key}" for description in descriptions}
+    registry = er.async_get(hass)
+    for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if registered.domain == SENSOR_DOMAIN and registered.unique_id not in kept:
+            registry.async_remove(registered.entity_id)
+    async_add_entities(
+        TrveEdfSensor(coordinator, description) for description in descriptions
     )
 
 

@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 import re
-from typing import Final
+from typing import Final, Literal
 from zoneinfo import ZoneInfo
 
 from .models import (
@@ -63,8 +63,22 @@ _MINUTE: Final = r"([0-5][0-9])"
 _RANGE: Final = re.compile(rf"{_HOUR}:{_MINUTE}\s*-\s*{_HOUR}:{_MINUTE}")
 
 
+type OffPeakErrorReason = Literal["empty", "format", "same_start_end", "overlap"]
+"""Why off-peak ranges are invalid: no range, a badly formatted range, a range
+starting and ending at the same time, or overlapping ranges."""
+
+
 class InvalidOffPeakRangesError(ValueError):
-    """The text of the off-peak ranges is not valid."""
+    """The text of the off-peak ranges is not valid.
+
+    Attributes:
+        reason: Why the ranges are invalid, to show a precise message.
+    """
+
+    def __init__(self, message: str, reason: OffPeakErrorReason) -> None:
+        """Initialize the error with a message and its reason."""
+        super().__init__(message)
+        self.reason: OffPeakErrorReason = reason
 
 
 def parse_off_peak_ranges(text: str) -> tuple[OffPeakRange, ...]:
@@ -84,7 +98,7 @@ def parse_off_peak_ranges(text: str) -> tuple[OffPeakRange, ...]:
             formatted or starts and ends at the same time, or ranges overlap.
     """
     if not text.strip():
-        raise InvalidOffPeakRangesError("No off-peak range")
+        raise InvalidOffPeakRangesError("No off-peak range", "empty")
     ranges = sorted(
         (_parse_range(item.strip()) for item in text.split(",")),
         key=lambda off_peak_range: off_peak_range.start,
@@ -93,8 +107,9 @@ def parse_off_peak_ranges(text: str) -> tuple[OffPeakRange, ...]:
     for off_peak_range in ranges:
         minutes = _minutes_of(off_peak_range)
         if not covered.isdisjoint(minutes):
+            text_range = _format_range(off_peak_range)
             raise InvalidOffPeakRangesError(
-                f"Off-peak range {_format_range(off_peak_range)} overlaps another range"
+                f"Off-peak range {text_range} overlaps another range", "overlap"
             )
         covered |= minutes
     return tuple(ranges)
@@ -105,7 +120,7 @@ def _parse_range(item: str) -> OffPeakRange:
     match = _RANGE.fullmatch(item)
     if match is None:
         raise InvalidOffPeakRangesError(
-            f"Invalid off-peak range {item!r}, expected HH:MM-HH:MM"
+            f"Invalid off-peak range {item!r}, expected HH:MM-HH:MM", "format"
         )
     start_hour, start_minute, end_hour, end_minute = map(int, match.groups())
     off_peak_range = OffPeakRange(
@@ -113,7 +128,8 @@ def _parse_range(item: str) -> OffPeakRange:
     )
     if off_peak_range.start == off_peak_range.end:
         raise InvalidOffPeakRangesError(
-            f"Off-peak range {item!r} starts and ends at the same time"
+            f"Off-peak range {item!r} starts and ends at the same time",
+            "same_start_end",
         )
     return off_peak_range
 

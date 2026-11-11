@@ -1771,3 +1771,21 @@ def test_tempo_naive_datetime(rule: Callable[[datetime], object]) -> None:
     """A naive datetime is rejected by every Tempo rule."""
     with pytest.raises(ValueError, match="timezone-aware"):
         rule(datetime(2026, 1, 15, 12))
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        pytest.param("", "empty", id="empty"),
+        pytest.param("  ", "empty", id="blank"),
+        pytest.param("22h00-06h00", "format", id="format"),
+        pytest.param("22:00-06:00,", "format", id="extra-comma"),
+        pytest.param("22:00-22:00", "same_start_end", id="same-start-end"),
+        pytest.param("22:00-06:00,05:00-07:00", "overlap", id="overlap"),
+    ],
+)
+def test_parse_error_reason(text: str, reason: str) -> None:
+    """Each kind of invalid off-peak ranges has its own reason."""
+    with pytest.raises(InvalidOffPeakRangesError) as excinfo:
+        parse_off_peak_ranges(text)
+    assert excinfo.value.reason == reason

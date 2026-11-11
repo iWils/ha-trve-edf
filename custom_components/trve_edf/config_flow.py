@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
@@ -49,6 +50,11 @@ OPTION_TITLES = {
 OFF_PEAK_EXAMPLE = "22:00-06:00"
 
 
+def _title(option: TariffOption, power: int) -> str:
+    """Return the title generated for a contract."""
+    return f"{TITLE_PREFIX}{TITLE_SEPARATOR}{OPTION_TITLES[option]} {power} kVA"
+
+
 def _off_peak_schema(default: str | None) -> vol.Schema:
     key = (
         vol.Required(CONF_OFF_PEAK_HOURS)
@@ -62,13 +68,16 @@ def _validate_off_peak(user_input: dict[str, Any]) -> tuple[str | None, dict[str
     """Return the canonical off-peak hours, or the errors of the form."""
     try:
         ranges = parse_off_peak_ranges(user_input[CONF_OFF_PEAK_HOURS])
-    except InvalidOffPeakRangesError:
-        return None, {CONF_OFF_PEAK_HOURS: "invalid_off_peak_hours"}
+    except InvalidOffPeakRangesError as err:
+        return None, {CONF_OFF_PEAK_HOURS: f"off_peak_{err.reason}"}
     return format_off_peak_ranges(ranges), {}
 
 
 class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Configure a TRVE contract: option, subscribed power, off-peak hours."""
+    """Configure a TRVE contract: option, subscribed power, off-peak hours.
+
+    The same steps add a contract or reconfigure an existing one.
+    """
 
     VERSION = 1
 
@@ -77,9 +86,23 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
         self._option = TariffOption.BASE
         self._grid: TariffGrid | None = None
         self._power = 0
+        self._reconfigured: ConfigEntry | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose the tariff option of a new contract."""
+        return await self._async_step_option("user", user_input)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change the option, the power or the off-peak hours of a contract."""
+        self._reconfigured = self._get_reconfigure_entry()
+        return await self._async_step_option("reconfigure", user_input)
+
+    async def _async_step_option(
+        self, step_id: str, user_input: dict[str, Any] | None
     ) -> ConfigFlowResult:
         """Choose the tariff option, then download its grid."""
         errors: dict[str, str] = {}
@@ -109,9 +132,12 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             }
         )
+        suggested = user_input
+        if suggested is None and self._reconfigured is not None:
+            suggested = {CONF_OPTION: self._reconfigured.data[CONF_OPTION]}
         return self.async_show_form(
-            step_id="user",
-            data_schema=self.add_suggested_values_to_schema(schema, user_input),
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
             errors=errors,
         )
 
@@ -143,7 +169,17 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             }
         )
-        return self.async_show_form(step_id="power", data_schema=schema)
+        suggested: dict[str, Any] = {}
+        if (
+            self._reconfigured is not None
+            and self._reconfigured.data[CONF_OPTION] == self._option
+            and self._reconfigured.data[CONF_POWER] in powers
+        ):
+            suggested[CONF_POWER] = str(self._reconfigured.data[CONF_POWER])
+        return self.async_show_form(
+            step_id="power",
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
+        )
 
     async def async_step_off_peak(
         self, user_input: dict[str, Any] | None = None
@@ -158,6 +194,8 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
 
         default = None if user_input is None else user_input[CONF_OFF_PEAK_HOURS]
+        if default is None and self._reconfigured is not None:
+            default = self._reconfigured.options.get(CONF_OFF_PEAK_HOURS)
         return self.async_show_form(
             step_id="off_peak",
             data_schema=_off_peak_schema(default),
@@ -167,27 +205,36 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @callback
     def _async_create_contract(self, options: dict[str, Any]) -> ConfigFlowResult:
-        title = (
-            f"{TITLE_PREFIX}{TITLE_SEPARATOR}"
-            f"{OPTION_TITLES[self._option]} {self._power} kVA"
+        """Add the contract, or update the reconfigured one."""
+        title = _title(self._option, self._power)
+        data = {CONF_OPTION: self._option.value, CONF_POWER: self._power}
+        if (entry := self._reconfigured) is None:
+            return self.async_create_entry(title=title, data=data, options=options)
+
+        # Only a generated title follows the contract: a title chosen by the user
+        # is kept.
+        former = _title(TariffOption(entry.data[CONF_OPTION]), entry.data[CONF_POWER])
+        if entry.title != former:
+            title = entry.title
+
+        # A loaded entry is reloaded by its update listener when it changes.
+        self.hass.config_entries.async_update_entry(
+            entry, title=title, data=data, options=options
         )
-        return self.async_create_entry(
-            title=title,
-            data={CONF_OPTION: self._option.value, CONF_POWER: self._power},
-            options=options,
-        )
+        if entry.state is not ConfigEntryState.LOADED:
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        return self.async_abort(reason="reconfigure_successful")
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        """Return the options flow of a contract."""
-        return TrveEdfOptionsFlow()
+        """Return the options flow of a contract.
 
-    @classmethod
-    @callback
-    def async_supports_options_flow(cls, config_entry: ConfigEntry) -> bool:
-        """Only HP/HC contracts have options: their off-peak hours."""
-        return bool(config_entry.data[CONF_OPTION] == TariffOption.HPHC)
+        Every contract offers it, because Home Assistant does not re-evaluate
+        whether an entry has options after a reconfiguration changes its option:
+        the flow itself tells Base and Tempo contracts that they have none.
+        """
+        return TrveEdfOptionsFlow()
 
 
 class TrveEdfOptionsFlow(OptionsFlow):
@@ -196,7 +243,14 @@ class TrveEdfOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Edit the off-peak hours."""
+        """Edit the off-peak hours of an HP/HC contract.
+
+        Base and Tempo contracts have no options (Tempo off-peak hours are fixed):
+        they are changed by a reconfiguration. The option is checked again when
+        the form is submitted, in case a reconfiguration changed it meanwhile.
+        """
+        if self.config_entry.data[CONF_OPTION] != TariffOption.HPHC:
+            return self.async_abort(reason="no_options")
         errors: dict[str, str] = {}
         if user_input is not None:
             off_peak, errors = _validate_off_peak(user_input)
@@ -204,7 +258,7 @@ class TrveEdfOptionsFlow(OptionsFlow):
                 return self.async_create_entry(data={CONF_OFF_PEAK_HOURS: off_peak})
             default = user_input[CONF_OFF_PEAK_HOURS]
         else:
-            default = self.config_entry.options[CONF_OFF_PEAK_HOURS]
+            default = self.config_entry.options.get(CONF_OFF_PEAK_HOURS)
 
         return self.async_show_form(
             step_id="init",

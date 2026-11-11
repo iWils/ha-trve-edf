@@ -1,0 +1,9 @@
+# Tests on the oldest Home Assistant release supported (hacs.json: 2025.1).
+# 0.13.205 is the last harness for Home Assistant 2025.1 (homeassistant==2025.1.4).
+pytest-homeassistant-custom-component==0.13.205
+# The dependency versions Home Assistant 2025.1.4 was released with. Without
+# them, pip also backtracks for a very long time on habluetooth.
+-c https://raw.githubusercontent.com/home-assistant/core/2025.1.4/homeassistant/package_constraints.txt
+# Not pinned by Home Assistant 2025.1. From pycares 4.9, a resolver shutdown
+# starts a thread that the 2025.1 harness reports as left behind by the test.
+pycares==4.5.0

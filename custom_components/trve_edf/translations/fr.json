@@ -21,15 +21,26 @@
         "data": {
           "off_peak_hours": "Heures creuses"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigurer le contrat",
+        "description": "Changez l'option de votre contrat aux tarifs réglementés EDF (TRVE). Les étapes suivantes permettent de changer la puissance souscrite et, pour HP/HC, les heures creuses.",
+        "data": {
+          "option": "Option"
+        }
       }
     },
     "error": {
-      "invalid_off_peak_hours": "Heures creuses invalides : utilisez des plages HH:MM-HH:MM séparées par des virgules, sans chevauchement.",
       "cannot_connect": "Impossible de télécharger la grille des tarifs réglementés. Réessayez plus tard.",
-      "invalid_data": "La grille des tarifs réglementés téléchargée est invalide. Réessayez plus tard."
+      "invalid_data": "La grille des tarifs réglementés téléchargée est invalide. Réessayez plus tard.",
+      "off_peak_empty": "Saisissez au moins une plage d'heures creuses, par exemple 22:00-06:00.",
+      "off_peak_format": "Chaque plage s'écrit HH:MM-HH:MM, les plages séparées par des virgules, par exemple 01:30-07:30,12:30-14:30.",
+      "off_peak_same_start_end": "Une plage ne peut pas commencer et finir à la même heure.",
+      "off_peak_overlap": "Les plages se chevauchent : chaque minute de la journée ne peut appartenir qu'à une seule plage."
     },
     "abort": {
-      "no_power_available": "Aucune puissance souscrite n'est actuellement proposée pour cette option."
+      "no_power_available": "Aucune puissance souscrite n'est actuellement proposée pour cette option.",
+      "reconfigure_successful": "Le contrat a été reconfiguré."
     }
   },
   "options": {
@@ -43,7 +54,13 @@
       }
     },
     "error": {
-      "invalid_off_peak_hours": "Heures creuses invalides : utilisez des plages HH:MM-HH:MM séparées par des virgules, sans chevauchement."
+      "off_peak_empty": "Saisissez au moins une plage d'heures creuses, par exemple 22:00-06:00.",
+      "off_peak_format": "Chaque plage s'écrit HH:MM-HH:MM, les plages séparées par des virgules, par exemple 01:30-07:30,12:30-14:30.",
+      "off_peak_same_start_end": "Une plage ne peut pas commencer et finir à la même heure.",
+      "off_peak_overlap": "Les plages se chevauchent : chaque minute de la journée ne peut appartenir qu'à une seule plage."
+    },
+    "abort": {
+      "no_options": "Les contrats Base et Tempo n'ont pas d'options : pour changer d'option ou de puissance, utilisez « Reconfigurer »."
     }
   },
   "selector": {
@@ -133,6 +150,12 @@
           "red": "Rouge"
         }
       }
+    }
+  },
+  "issues": {
+    "power_not_available": {
+      "title": "Puissance souscrite absente des tarifs réglementés",
+      "description": "La grille des tarifs réglementés de la CRE n'a aucun tarif en vigueur pour {power} kVA, la puissance souscrite de « {title} » : ses prix sont indisponibles. Si votre contrat a changé, reconfigurez l'intégration (Paramètres → Appareils et services → Tarifs réglementés EDF (TRVE) → ⋮ → Reconfigurer)."
     }
   }
 }
