@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import patch
@@ -19,16 +20,18 @@ from custom_components.trve_edf.const import (
     DOMAIN,
 )
 from custom_components.trve_edf.models import (
+    PriceKey,
     TariffGrid,
     TariffOption,
-    TariffPeriod,
     TariffRow,
+    TempoColor,
 )
 
 PARIS = ZoneInfo("Europe/Paris")
 
 COORDINATOR_FETCH = "custom_components.trve_edf.coordinator.async_fetch_grid"
 CONFIG_FLOW_FETCH = "custom_components.trve_edf.config_flow.async_fetch_grid"
+TEMPO_FETCH = "custom_components.trve_edf.tempo.async_fetch_tempo_colors"
 
 PREVIOUS_START = date(2026, 2, 1)
 PREVIOUS_END = date(2026, 7, 31)
@@ -48,9 +51,7 @@ def _row(
         end=end,
         power_kva=power,
         subscription=Decimal(subscription),
-        prices={
-            TariffPeriod(period): Decimal(price) for period, price in prices.items()
-        },
+        prices={PriceKey(key): Decimal(price) for key, price in prices.items()},
     )
 
 
@@ -75,7 +76,48 @@ HPHC_GRID = TariffGrid(
     ),
 )
 
-GRIDS = {TariffOption.BASE: BASE_GRID, TariffOption.HPHC: HPHC_GRID}
+TEMPO_PRICES = {
+    "blue_peak": "0.1654",
+    "blue_off_peak": "0.1356",
+    "white_peak": "0.1921",
+    "white_off_peak": "0.1536",
+    "red_peak": "0.7295",
+    "red_off_peak": "0.1615",
+}
+
+TEMPO_GRID = TariffGrid(
+    option=TariffOption.TEMPO,
+    rows=(
+        _row(CURRENT_START, None, 6, "189.9802924", **TEMPO_PRICES),
+        _row(CURRENT_START, None, 9, "237.3436191", **TEMPO_PRICES),
+    ),
+)
+
+GRIDS = {
+    TariffOption.BASE: BASE_GRID,
+    TariffOption.HPHC: HPHC_GRID,
+    TariffOption.TEMPO: TEMPO_GRID,
+}
+
+
+type TempoSource = Callable[[object, Sequence[date]], Awaitable[dict[date, TempoColor]]]
+"""Replacement of the function that gets the Tempo colors."""
+
+
+class FakeTempoSource:
+    """Simulated Tempo color source: it knows the colors of ``colors``."""
+
+    def __init__(self, colors: Mapping[date, TempoColor] | None = None) -> None:
+        """Initialize the source with its known colors."""
+        self.colors: dict[date, TempoColor] = dict(colors or {})
+        self.requests: list[tuple[date, ...]] = []
+
+    async def __call__(
+        self, session: object, days: Sequence[date]
+    ) -> dict[date, TempoColor]:
+        """Return the known colors of the requested days."""
+        self.requests.append(tuple(days))
+        return {day: self.colors[day] for day in days if day in self.colors}
 
 
 async def setup_contract(
@@ -83,8 +125,9 @@ async def setup_contract(
     option: TariffOption,
     power: int = 6,
     off_peak: str | None = None,
+    tempo: TempoSource | None = None,
 ) -> MockConfigEntry:
-    """Add and set up a contract whose grid download is simulated."""
+    """Add and set up a contract whose downloads are simulated."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title=f"Contract {option} {power} kVA",
@@ -92,7 +135,10 @@ async def setup_contract(
         options={} if off_peak is None else {CONF_OFF_PEAK_HOURS: off_peak},
     )
     entry.add_to_hass(hass)
-    with patch(COORDINATOR_FETCH, return_value=GRIDS[option]):
+    with (
+        patch(COORDINATOR_FETCH, return_value=GRIDS[option]),
+        patch(TEMPO_FETCH, tempo or FakeTempoSource()),
+    ):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
     return entry

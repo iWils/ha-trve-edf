@@ -102,10 +102,12 @@ une sans toucher au reste.
 La source officielle est l'API « Tempo Like Supply Contract » de RTE, mais elle
 exige un compte : elle n'est pas utilisable sans configuration. Décision :
 
-- **Source principale : API Jour Tempo** (`https://jourtempo.fr/api/v1/`),
-  référencée sur data.gouv.fr, gratuite, sans clé, licence ouverte. Elle
-  redistribue les couleurs publiées par RTE (`tempo.json` : aujourd'hui et demain ;
-  `tempo-historique.csv` : historique depuis 2014).
+- **Source principale : Jour Tempo** (`https://jourtempo.fr/api/v1/`), référencée
+  sur data.gouv.fr, gratuite, sans clé, licence ouverte. Elle redistribue les
+  couleurs publiées par RTE. L'intégration lit son fichier `tempo-historique.csv`
+  (colonnes `date`, `couleur`, `saison` ; une ligne par jour depuis 2014), qui
+  contient aussi le jour même et le lendemain dès sa publication, et dont le format
+  a été vérifié sur data.gouv.fr.
 - **Source de secours** : une seconde API communautaire sans clé (par exemple
   api-couleur-tempo.fr), interrogée seulement si la principale échoue.
 - **Plus tard, en option** : l'API officielle RTE avec les identifiants de
@@ -169,9 +171,11 @@ fondés sur l'entrée de configuration.
 - **Grille tarifaire** : au démarrage, puis une fois par jour. Elle est enregistrée et
   partagée par les contrats de la même option : une grille enregistrée depuis moins
   d'un jour est réutilisée sans nouveau téléchargement.
-- **Couleurs Tempo** : au démarrage, au changement de jour, puis à partir de
-  l'heure de publication, à intervalle espacé, jusqu'à obtenir la couleur du
-  lendemain. Une couleur connue n'est plus jamais redemandée.
+- **Couleurs Tempo** : seules les couleurs manquantes d'hier, d'aujourd'hui et,
+  à partir de 10 h 30 la veille, de demain sont demandées, toutes les 15 minutes
+  tant qu'il en manque une. Les couleurs connues sont enregistrées, partagées par
+  tous les contrats Tempo et ne sont plus jamais redemandées. En cas de panne, les
+  couleurs connues restent utilisées.
 - **Prix et période actuels** : recalculés **exactement** à chaque changement
   (début ou fin d'heures creuses, 6 h pour Tempo, minuit), sans sondage minute par
   minute.
@@ -197,7 +201,8 @@ custom_components/trve_edf/
 ├── models.py          # options, couleurs, grilles et jours Tempo (dataclasses)
 ├── pricing.py         # règles métier pures, sans dépendance à Home Assistant
 ├── api.py             # clients CRE et Tempo (session HTTP de Home Assistant)
-├── coordinator.py     # récupération et cache des données distantes
+├── coordinator.py     # grille tarifaire et horloge des périodes d'un contrat
+├── tempo.py           # couleurs Tempo, partagées par les contrats Tempo
 ├── config_flow.py     # configuration, options, reconfiguration
 ├── entity.py, sensor.py
 ├── diagnostics.py

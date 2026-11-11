@@ -2,8 +2,9 @@
 
 🇫🇷 [Version française](README.md)
 
-> 🚧 **Under development (0.x)**: version 0.1.0 supports the Base and Peak /
-> Off-peak hours options. Tempo comes with 0.2.0.
+> 🚧 **Under development (0.x)**: the Base, Peak / Off-peak hours and Tempo options
+> are available since 0.2.0. Version 1.0 will follow a validation in real
+> conditions.
 
 Home Assistant integration that provides the EDF **regulated electricity tariffs
 (TRVE, "tarifs réglementés de vente d'électricité")** of your contract, and the
@@ -42,12 +43,13 @@ Home Assistant 2025.1 or newer is required.
 
 ## Configuration
 
-1. Choose the option of your contract: Base or Peak / Off-peak hours (HP/HC).
+1. Choose the option of your contract: Base, Peak / Off-peak hours (HP/HC) or Tempo.
 2. Choose your subscribed power: only the powers currently offered for this option
    are listed.
 3. HP/HC: enter your off-peak hours as written on your bill, for example
    `22:00-06:00` or `01:30-07:30,12:30-14:30`. They can be changed later in the
-   options of the integration.
+   options of the integration. Tempo off-peak hours are set nationally, from 22:00 to
+   06:00: nothing to enter.
 
 Several contracts can be added, for example for several homes.
 
@@ -60,7 +62,10 @@ Several contracts can be added, for example for several homes.
 | Yearly subscription | all | Yearly amount including taxes, in EUR |
 | Base price | Base | Price of the kWh, in EUR/kWh including taxes |
 | Peak hours price, off-peak hours price | HP/HC | Price of the kWh of each period |
-| Next price change | HP/HC | Date and time of the next change: peak/off-peak switch, or new tariff grid at midnight |
+| Blue, white, red × peak, off-peak hours prices | Tempo | The 6 Tempo prices of the kWh |
+| Next price change | HP/HC, Tempo | Date and time of the next change: peak/off-peak switch, or new tariff grid at midnight |
+| Current Tempo color | Tempo | Color of the current Tempo day, from 06:00 to 06:00 the next day |
+| Yesterday's, today's, tomorrow's Tempo color | Tempo | "Unknown" until the color is published (tomorrow's, around 11:00) |
 
 For the Energy dashboard, choose "Use an entity with current price" and select the
 "Current price" sensor.
@@ -69,6 +74,12 @@ Prices are recomputed at the exact moment of each period change, in French time.
 tariff grid is downloaded once a day and saved. If it cannot be downloaded anymore,
 the last known grid is still used, even after a restart, for 7 days at most after its
 download: prices then become unavailable rather than showing a possibly wrong value.
+Likewise, for Tempo, the current price is unavailable until the color of the current
+Tempo day is known.
+
+Tempo colors come from Jour Tempo, which redistributes the RTE data, with a fallback
+source. They are only asked for when one is missing (tomorrow's, from 10:30), saved
+and shared by all the Tempo contracts.
 
 ## Development
 

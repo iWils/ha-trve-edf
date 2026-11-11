@@ -2,8 +2,9 @@
 
 🇬🇧 [English version](README.en.md)
 
-> 🚧 **En développement (0.x)** : la version 0.1.0 gère les options Base et
-> Heures pleines / Heures creuses. Tempo arrive avec la 0.2.0.
+> 🚧 **En développement (0.x)** : les options Base, Heures pleines / Heures creuses
+> et Tempo sont disponibles depuis la 0.2.0. La 1.0 viendra après validation en
+> conditions réelles.
 
 Intégration Home Assistant qui fournit les **tarifs réglementés de vente d'électricité
 (TRVE)** d'EDF correspondant à votre contrat, et le **prix du kWh en vigueur à chaque
@@ -42,12 +43,14 @@ Home Assistant 2025.1 ou plus récent est nécessaire.
 
 ## Configuration
 
-1. Choisissez l'option de votre contrat : Base ou Heures pleines / Heures creuses.
+1. Choisissez l'option de votre contrat : Base, Heures pleines / Heures creuses ou
+   Tempo.
 2. Choisissez votre puissance souscrite : seules les puissances actuellement
    proposées pour cette option sont listées.
 3. Heures pleines / Heures creuses : saisissez vos heures creuses telles qu'indiquées
    sur votre facture, par exemple `22:00-06:00` ou `01:30-07:30,12:30-14:30`. Elles se
-   modifient ensuite dans les options de l'intégration.
+   modifient ensuite dans les options de l'intégration. Pour Tempo, les heures creuses
+   sont fixées nationalement de 22 h à 6 h : rien à saisir.
 
 Plusieurs contrats peuvent être ajoutés, par exemple pour plusieurs logements.
 
@@ -60,7 +63,10 @@ Plusieurs contrats peuvent être ajoutés, par exemple pour plusieurs logements.
 | Abonnement annuel | toutes | Montant annuel TTC, en € |
 | Prix Base | Base | Prix du kWh, en €/kWh TTC |
 | Prix heures pleines, prix heures creuses | HP/HC | Prix du kWh de chaque période |
-| Prochain changement de prix | HP/HC | Date et heure du prochain changement : passage HP/HC, ou nouvelle grille tarifaire à minuit |
+| Prix bleu, blanc, rouge × heures pleines, heures creuses | Tempo | Les 6 prix du kWh Tempo |
+| Prochain changement de prix | HP/HC, Tempo | Date et heure du prochain changement : passage HP/HC, ou nouvelle grille tarifaire à minuit |
+| Couleur Tempo en cours | Tempo | Couleur de la journée Tempo en cours, de 6 h à 6 h le lendemain |
+| Couleur Tempo d'hier, d'aujourd'hui, de demain | Tempo | « Inconnu » tant que la couleur n'est pas publiée (celle de demain, vers 11 h) |
 
 Pour le tableau de bord Énergie, choisissez « Utiliser une entité avec le prix
 actuel » et sélectionnez le capteur « Prix actuel ».
@@ -69,7 +75,14 @@ Les prix sont recalculés à l'instant exact de chaque changement de période, �
 française. La grille tarifaire est téléchargée une fois par jour et enregistrée. Si elle ne peut
 plus être téléchargée, la dernière grille connue reste utilisée, y compris après un
 redémarrage, pendant 7 jours au plus après son téléchargement : les prix deviennent
-ensuite indisponibles plutôt que d'afficher une valeur peut-être fausse.
+ensuite indisponibles plutôt que d'afficher une valeur peut-être fausse. De même,
+pour Tempo, le prix actuel est indisponible tant que la couleur de la journée en
+cours n'est pas connue.
+
+Les couleurs Tempo viennent de Jour Tempo, qui redistribue les données de RTE, avec
+une source de secours. Elles sont demandées seulement quand il en manque une
+(celle de demain, à partir de 10 h 30), enregistrées et partagées par tous les
+contrats Tempo.
 
 ## Développement
 

@@ -43,6 +43,7 @@ from .pricing import (
 OPTION_TITLES = {
     TariffOption.BASE: "Base",
     TariffOption.HPHC: "HP/HC",
+    TariffOption.TEMPO: "Tempo",
 }
 
 OFF_PEAK_EXAMPLE = "22:00-06:00"

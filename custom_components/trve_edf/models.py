@@ -19,21 +19,63 @@ class TariffOption(StrEnum):
 
     BASE = "base"
     HPHC = "hphc"
+    TEMPO = "tempo"
 
 
 class TariffPeriod(StrEnum):
-    """Tariff period: each one has its own price of the kWh."""
+    """Tariff period of the day: base, peak hours or off-peak hours."""
 
     BASE = "base"
     PEAK = "peak"
     OFF_PEAK = "off_peak"
 
 
+class TempoColor(StrEnum):
+    """Color of a Tempo day."""
+
+    BLUE = "blue"
+    WHITE = "white"
+    RED = "red"
+
+
+class PriceKey(StrEnum):
+    """Price of the kWh in a tariff row.
+
+    Base and HP/HC have one price per period; Tempo has one price per period and
+    color. The values of the first three keys are those of the matching periods.
+    """
+
+    BASE = "base"
+    PEAK = "peak"
+    OFF_PEAK = "off_peak"
+    BLUE_PEAK = "blue_peak"
+    BLUE_OFF_PEAK = "blue_off_peak"
+    WHITE_PEAK = "white_peak"
+    WHITE_OFF_PEAK = "white_off_peak"
+    RED_PEAK = "red_peak"
+    RED_OFF_PEAK = "red_off_peak"
+
+
 OPTION_PERIODS: Final[Mapping[TariffOption, tuple[TariffPeriod, ...]]] = {
     TariffOption.BASE: (TariffPeriod.BASE,),
     TariffOption.HPHC: (TariffPeriod.PEAK, TariffPeriod.OFF_PEAK),
+    TariffOption.TEMPO: (TariffPeriod.PEAK, TariffPeriod.OFF_PEAK),
 }
-"""Periods priced by each option."""
+"""Periods of the day of each option."""
+
+OPTION_PRICES: Final[Mapping[TariffOption, tuple[PriceKey, ...]]] = {
+    TariffOption.BASE: (PriceKey.BASE,),
+    TariffOption.HPHC: (PriceKey.PEAK, PriceKey.OFF_PEAK),
+    TariffOption.TEMPO: (
+        PriceKey.BLUE_PEAK,
+        PriceKey.BLUE_OFF_PEAK,
+        PriceKey.WHITE_PEAK,
+        PriceKey.WHITE_OFF_PEAK,
+        PriceKey.RED_PEAK,
+        PriceKey.RED_OFF_PEAK,
+    ),
+}
+"""Prices of the kWh of each option."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,15 +87,15 @@ class TariffRow:
         end: Last day of validity (included), or None while the row is in force.
         power_kva: Subscribed power, in kVA.
         subscription: Yearly subscription, in euros, taxes included.
-        prices: Price of the kWh of each period of the option, in euros, taxes
-            included.
+        prices: Price of the kWh of each price key of the option (see
+            ``OPTION_PRICES``), in euros, taxes included.
     """
 
     start: date
     end: date | None
     power_kva: int
     subscription: Decimal
-    prices: Mapping[TariffPeriod, Decimal]
+    prices: Mapping[PriceKey, Decimal]
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,9 +116,7 @@ def grid_to_dict(grid: TariffGrid) -> dict[str, Any]:
                 "end": None if row.end is None else row.end.isoformat(),
                 "power_kva": row.power_kva,
                 "subscription": str(row.subscription),
-                "prices": {
-                    period.value: str(price) for period, price in row.prices.items()
-                },
+                "prices": {key.value: str(price) for key, price in row.prices.items()},
             }
             for row in grid.rows
         ],
@@ -98,15 +138,15 @@ def grid_from_dict(data: Any) -> TariffGrid | None:
                 power_kva=int(row["power_kva"]),
                 subscription=Decimal(row["subscription"]),
                 prices={
-                    TariffPeriod(period): Decimal(price)
-                    for period, price in row["prices"].items()
+                    PriceKey(key): Decimal(price)
+                    for key, price in row["prices"].items()
                 },
             )
             for row in data["rows"]
         )
     except (ArithmeticError, AttributeError, KeyError, TypeError, ValueError):
         return None
-    if not rows or any(set(row.prices) != set(OPTION_PERIODS[option]) for row in rows):
+    if not rows or any(set(row.prices) != set(OPTION_PRICES[option]) for row in rows):
         return None
     return TariffGrid(option=option, rows=rows)
 
