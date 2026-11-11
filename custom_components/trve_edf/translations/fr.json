@@ -1,0 +1,12 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "Configurez un contrat aux tarifs réglementés EDF (TRVE)."
+      }
+    },
+    "abort": {
+      "not_available_yet": "Cette intégration est en cours de développement : la configuration des contrats n'est pas encore disponible."
+    }
+  }
+}

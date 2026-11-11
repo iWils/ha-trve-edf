@@ -35,6 +35,17 @@ Once the first version is released: in HACS, add this repository as a custom
 repository of type "Integration", install "Tarifs réglementés EDF (TRVE)", restart
 Home Assistant, then add the integration.
 
+## Development
+
+The project is developed with the help of AI, within the frame set by the
+[specification](docs/cahier-des-charges.md) and the rules of
+[`CLAUDE.md`](CLAUDE.md), which also lists the test commands. Every change goes
+through a pull request checked by the CI: style, types, tests, hassfest and HACS.
+
+Versions follow [SemVer](https://semver.org) (0.x during development). A release is
+published automatically for each new version merged into `main`; the history is in
+the [changelog](CHANGELOG.md).
+
 ## License and disclaimer
 
 Released under the [GPL-3.0](LICENSE) license. Community, non-commercial project,
