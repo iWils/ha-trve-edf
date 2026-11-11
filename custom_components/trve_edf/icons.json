@@ -1,0 +1,62 @@
+{
+  "entity": {
+    "sensor": {
+      "current_price": {
+        "default": "mdi:cash-clock"
+      },
+      "current_period": {
+        "default": "mdi:clock-outline",
+        "state": {
+          "base": "mdi:flash",
+          "peak": "mdi:white-balance-sunny",
+          "off_peak": "mdi:weather-night"
+        }
+      },
+      "next_price_change": {
+        "default": "mdi:calendar-clock"
+      },
+      "subscription": {
+        "default": "mdi:file-document-outline"
+      },
+      "base_price": {
+        "default": "mdi:cash"
+      },
+      "peak_price": {
+        "default": "mdi:white-balance-sunny"
+      },
+      "off_peak_price": {
+        "default": "mdi:weather-night"
+      },
+      "blue_peak_price": {
+        "default": "mdi:white-balance-sunny"
+      },
+      "blue_off_peak_price": {
+        "default": "mdi:weather-night"
+      },
+      "white_peak_price": {
+        "default": "mdi:white-balance-sunny"
+      },
+      "white_off_peak_price": {
+        "default": "mdi:weather-night"
+      },
+      "red_peak_price": {
+        "default": "mdi:white-balance-sunny"
+      },
+      "red_off_peak_price": {
+        "default": "mdi:weather-night"
+      },
+      "tempo_color": {
+        "default": "mdi:palette"
+      },
+      "tempo_color_yesterday": {
+        "default": "mdi:calendar-arrow-left"
+      },
+      "tempo_color_today": {
+        "default": "mdi:calendar-today"
+      },
+      "tempo_color_tomorrow": {
+        "default": "mdi:calendar-arrow-right"
+      }
+    }
+  }
+}

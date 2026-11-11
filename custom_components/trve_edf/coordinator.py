@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.storage import Store
@@ -141,6 +142,41 @@ class TrveEdfCoordinator(DataUpdateCoordinator[TariffGrid]):
         if grid is None or grid.option is not self.option or downloaded_at is None:
             return None
         return grid, downloaded_at
+
+    @property
+    def power_issue_id(self) -> str:
+        """Return the id of the repair issue of a power missing from the grid."""
+        return f"power_not_available_{self.config_entry.entry_id}"
+
+    @callback
+    def async_update_listeners(self) -> None:
+        """Check that the power is still in the grid, then notify the entities."""
+        self._async_check_power(dt_util.utcnow())
+        super().async_update_listeners()
+
+    @callback
+    def _async_check_power(self, now: datetime) -> None:
+        """Raise or clear the repair issue of a power missing from the grid.
+
+        Nothing is decided while the grid is not trusted.
+        """
+        if not self.grid_is_trusted(now):
+            return
+        if row_in_force(self.data, now.astimezone(PARIS).date(), self.power_kva):
+            ir.async_delete_issue(self.hass, DOMAIN, self.power_issue_id)
+            return
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self.power_issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="power_not_available",
+            translation_placeholders={
+                "title": self.config_entry.title,
+                "power": str(self.power_kva),
+            },
+        )
 
     def grid_is_trusted(self, now: datetime) -> bool:
         """Tell whether the grid in use is recent enough to be trusted."""

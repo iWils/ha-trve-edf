@@ -92,7 +92,7 @@ async def test_hphc_contract_with_off_peak_hours(hass: HomeAssistant) -> None:
         result["flow_id"], {CONF_OFF_PEAK_HOURS: "25:00-06:00"}
     )
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_OFF_PEAK_HOURS: "invalid_off_peak_hours"}
+    assert result["errors"] == {CONF_OFF_PEAK_HOURS: "off_peak_format"}
 
     with patch(COORDINATOR_FETCH, return_value=HPHC_GRID):
         result = await hass.config_entries.flow.async_configure(
@@ -184,7 +184,7 @@ async def test_options_flow_changes_off_peak_hours(hass: HomeAssistant) -> None:
         result["flow_id"], {CONF_OFF_PEAK_HOURS: "nope"}
     )
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_OFF_PEAK_HOURS: "invalid_off_peak_hours"}
+    assert result["errors"] == {CONF_OFF_PEAK_HOURS: "off_peak_format"}
 
     with patch(COORDINATOR_FETCH, return_value=HPHC_GRID):
         result = await hass.config_entries.options.async_configure(

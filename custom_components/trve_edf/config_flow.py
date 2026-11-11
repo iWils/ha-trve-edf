@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
@@ -62,13 +63,16 @@ def _validate_off_peak(user_input: dict[str, Any]) -> tuple[str | None, dict[str
     """Return the canonical off-peak hours, or the errors of the form."""
     try:
         ranges = parse_off_peak_ranges(user_input[CONF_OFF_PEAK_HOURS])
-    except InvalidOffPeakRangesError:
-        return None, {CONF_OFF_PEAK_HOURS: "invalid_off_peak_hours"}
+    except InvalidOffPeakRangesError as err:
+        return None, {CONF_OFF_PEAK_HOURS: f"off_peak_{err.reason}"}
     return format_off_peak_ranges(ranges), {}
 
 
 class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Configure a TRVE contract: option, subscribed power, off-peak hours."""
+    """Configure a TRVE contract: option, subscribed power, off-peak hours.
+
+    The same steps add a contract or reconfigure an existing one.
+    """
 
     VERSION = 1
 
@@ -77,9 +81,23 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
         self._option = TariffOption.BASE
         self._grid: TariffGrid | None = None
         self._power = 0
+        self._reconfigured: ConfigEntry | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose the tariff option of a new contract."""
+        return await self._async_step_option("user", user_input)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change the option, the power or the off-peak hours of a contract."""
+        self._reconfigured = self._get_reconfigure_entry()
+        return await self._async_step_option("reconfigure", user_input)
+
+    async def _async_step_option(
+        self, step_id: str, user_input: dict[str, Any] | None
     ) -> ConfigFlowResult:
         """Choose the tariff option, then download its grid."""
         errors: dict[str, str] = {}
@@ -109,9 +127,12 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             }
         )
+        suggested = user_input
+        if suggested is None and self._reconfigured is not None:
+            suggested = {CONF_OPTION: self._reconfigured.data[CONF_OPTION]}
         return self.async_show_form(
-            step_id="user",
-            data_schema=self.add_suggested_values_to_schema(schema, user_input),
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
             errors=errors,
         )
 
@@ -143,7 +164,17 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             }
         )
-        return self.async_show_form(step_id="power", data_schema=schema)
+        suggested: dict[str, Any] = {}
+        if (
+            self._reconfigured is not None
+            and self._reconfigured.data[CONF_OPTION] == self._option
+            and self._reconfigured.data[CONF_POWER] in powers
+        ):
+            suggested[CONF_POWER] = str(self._reconfigured.data[CONF_POWER])
+        return self.async_show_form(
+            step_id="power",
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
+        )
 
     async def async_step_off_peak(
         self, user_input: dict[str, Any] | None = None
@@ -158,6 +189,8 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
 
         default = None if user_input is None else user_input[CONF_OFF_PEAK_HOURS]
+        if default is None and self._reconfigured is not None:
+            default = self._reconfigured.options.get(CONF_OFF_PEAK_HOURS)
         return self.async_show_form(
             step_id="off_peak",
             data_schema=_off_peak_schema(default),
@@ -167,15 +200,22 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @callback
     def _async_create_contract(self, options: dict[str, Any]) -> ConfigFlowResult:
+        """Add the contract, or update the reconfigured one."""
         title = (
             f"{TITLE_PREFIX}{TITLE_SEPARATOR}"
             f"{OPTION_TITLES[self._option]} {self._power} kVA"
         )
-        return self.async_create_entry(
-            title=title,
-            data={CONF_OPTION: self._option.value, CONF_POWER: self._power},
-            options=options,
+        data = {CONF_OPTION: self._option.value, CONF_POWER: self._power}
+        if (entry := self._reconfigured) is None:
+            return self.async_create_entry(title=title, data=data, options=options)
+
+        # A loaded entry is reloaded by its update listener when it changes.
+        self.hass.config_entries.async_update_entry(
+            entry, title=title, data=data, options=options
         )
+        if entry.state is not ConfigEntryState.LOADED:
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        return self.async_abort(reason="reconfigure_successful")
 
     @staticmethod
     @callback

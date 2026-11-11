@@ -21,15 +21,26 @@
         "data": {
           "off_peak_hours": "Off-peak hours"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure the contract",
+        "description": "Change the option of your EDF regulated tariff (TRVE) contract. The next steps let you change the subscribed power and, for HP/HC, the off-peak hours.",
+        "data": {
+          "option": "Option"
+        }
       }
     },
     "error": {
-      "invalid_off_peak_hours": "Invalid off-peak hours: use HH:MM-HH:MM ranges separated by commas, without overlap.",
       "cannot_connect": "Cannot download the regulated tariffs grid. Try again later.",
-      "invalid_data": "The downloaded regulated tariffs grid is invalid. Try again later."
+      "invalid_data": "The downloaded regulated tariffs grid is invalid. Try again later.",
+      "off_peak_empty": "Enter at least one off-peak range, for example 22:00-06:00.",
+      "off_peak_format": "Each range must be written HH:MM-HH:MM, ranges separated by commas, for example 01:30-07:30,12:30-14:30.",
+      "off_peak_same_start_end": "A range cannot start and end at the same time.",
+      "off_peak_overlap": "The ranges overlap: each minute of the day can only be in one range."
     },
     "abort": {
-      "no_power_available": "No subscribed power is currently offered for this option."
+      "no_power_available": "No subscribed power is currently offered for this option.",
+      "reconfigure_successful": "The contract has been reconfigured."
     }
   },
   "options": {
@@ -43,7 +54,10 @@
       }
     },
     "error": {
-      "invalid_off_peak_hours": "Invalid off-peak hours: use HH:MM-HH:MM ranges separated by commas, without overlap."
+      "off_peak_empty": "Enter at least one off-peak range, for example 22:00-06:00.",
+      "off_peak_format": "Each range must be written HH:MM-HH:MM, ranges separated by commas, for example 01:30-07:30,12:30-14:30.",
+      "off_peak_same_start_end": "A range cannot start and end at the same time.",
+      "off_peak_overlap": "The ranges overlap: each minute of the day can only be in one range."
     }
   },
   "selector": {
@@ -133,6 +147,12 @@
           "red": "Red"
         }
       }
+    }
+  },
+  "issues": {
+    "power_not_available": {
+      "title": "Subscribed power not found in the regulated tariffs",
+      "description": "The regulated tariffs grid of the CRE has no tariff in force for {power} kVA, the subscribed power of \"{title}\": its prices are unavailable. If your contract changed, reconfigure the integration (Settings → Devices & services → Tarifs réglementés EDF (TRVE) → ⋮ → Reconfigure)."
     }
   }
 }
