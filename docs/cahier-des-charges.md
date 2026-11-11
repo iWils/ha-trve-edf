@@ -174,7 +174,8 @@ fondés sur l'entrée de configuration.
 
 - Délais d'attente sur toutes les requêtes ; une réponse invalide n'est jamais
   conservée.
-- En cas de panne passagère, les dernières données valides restent utilisées.
+- En cas de panne passagère, les dernières données valides restent utilisées, pendant
+  7 jours au plus : au-delà, les prix deviennent indisponibles (principe 2).
 - Si la puissance configurée disparaît de la grille, l'intégration le signale
   clairement (notification de réparation) au lieu d'échouer en boucle.
 - Téléchargement des diagnostics possible depuis l'interface.

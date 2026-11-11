@@ -2,7 +2,8 @@
 
 🇬🇧 [English version](README.en.md)
 
-> 🚧 **En développement (0.x)** : aucune version n'est encore publiée.
+> 🚧 **En développement (0.x)** : la version 0.1.0 gère les options Base et
+> Heures pleines / Heures creuses. Tempo arrive avec la 0.2.0.
 
 Intégration Home Assistant qui fournit les **tarifs réglementés de vente d'électricité
 (TRVE)** d'EDF correspondant à votre contrat, et le **prix du kWh en vigueur à chaque
@@ -31,9 +32,43 @@ Aucun compte n'est nécessaire et aucune donnée personnelle n'est envoyée.
 
 ## Installation
 
-Quand la première version sera publiée : dans HACS, ajoutez ce dépôt comme dépôt
-personnalisé de type « Intégration », installez « Tarifs réglementés EDF (TRVE) »,
-redémarrez Home Assistant puis ajoutez l'intégration.
+Home Assistant 2025.1 ou plus récent est nécessaire.
+
+1. Dans HACS, ajoutez `https://github.com/iWils/ha-trve-edf` comme dépôt personnalisé
+   de type « Intégration ».
+2. Installez « Tarifs réglementés EDF (TRVE) », puis redémarrez Home Assistant.
+3. Dans Paramètres → Appareils et services, ajoutez l'intégration « Tarifs réglementés
+   EDF (TRVE) ».
+
+## Configuration
+
+1. Choisissez l'option de votre contrat : Base ou Heures pleines / Heures creuses.
+2. Choisissez votre puissance souscrite : seules les puissances actuellement
+   proposées pour cette option sont listées.
+3. Heures pleines / Heures creuses : saisissez vos heures creuses telles qu'indiquées
+   sur votre facture, par exemple `22:00-06:00` ou `01:30-07:30,12:30-14:30`. Elles se
+   modifient ensuite dans les options de l'intégration.
+
+Plusieurs contrats peuvent être ajoutés, par exemple pour plusieurs logements.
+
+## Entités
+
+| Entité | Options | Description |
+|---|---|---|
+| Prix actuel | toutes | Prix du kWh en vigueur, en €/kWh TTC |
+| Période tarifaire actuelle | toutes | Base, heures pleines ou heures creuses |
+| Abonnement annuel | toutes | Montant annuel TTC, en € |
+| Prix Base | Base | Prix du kWh, en €/kWh TTC |
+| Prix heures pleines, prix heures creuses | HP/HC | Prix du kWh de chaque période |
+| Prochain changement de prix | HP/HC | Date et heure du prochain passage HP/HC |
+
+Pour le tableau de bord Énergie, choisissez « Utiliser une entité avec le prix
+actuel » et sélectionnez le capteur « Prix actuel ».
+
+Les prix sont recalculés à l'instant exact de chaque changement de période, à l'heure
+française. Si la grille tarifaire ne peut plus être téléchargée, les derniers prix
+connus restent utilisés pendant 7 jours au plus, puis deviennent indisponibles plutôt
+que d'afficher une valeur peut-être fausse.
 
 ## Développement
 

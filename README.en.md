@@ -2,7 +2,8 @@
 
 🇫🇷 [Version française](README.md)
 
-> 🚧 **Under development (0.x)**: no version has been released yet.
+> 🚧 **Under development (0.x)**: version 0.1.0 supports the Base and Peak /
+> Off-peak hours options. Tempo comes with 0.2.0.
 
 Home Assistant integration that provides the EDF **regulated electricity tariffs
 (TRVE, "tarifs réglementés de vente d'électricité")** of your contract, and the
@@ -31,9 +32,42 @@ No account is needed and no personal data is sent.
 
 ## Installation
 
-Once the first version is released: in HACS, add this repository as a custom
-repository of type "Integration", install "Tarifs réglementés EDF (TRVE)", restart
-Home Assistant, then add the integration.
+Home Assistant 2025.1 or newer is required.
+
+1. In HACS, add `https://github.com/iWils/ha-trve-edf` as a custom repository of type
+   "Integration".
+2. Install "Tarifs réglementés EDF (TRVE)", then restart Home Assistant.
+3. In Settings → Devices & services, add the "Tarifs réglementés EDF (TRVE)"
+   integration.
+
+## Configuration
+
+1. Choose the option of your contract: Base or Peak / Off-peak hours (HP/HC).
+2. Choose your subscribed power: only the powers currently offered for this option
+   are listed.
+3. HP/HC: enter your off-peak hours as written on your bill, for example
+   `22:00-06:00` or `01:30-07:30,12:30-14:30`. They can be changed later in the
+   options of the integration.
+
+Several contracts can be added, for example for several homes.
+
+## Entities
+
+| Entity | Options | Description |
+|---|---|---|
+| Current price | all | Price of the kWh in force, in EUR/kWh including taxes |
+| Current tariff period | all | Base, peak hours or off-peak hours |
+| Yearly subscription | all | Yearly amount including taxes, in EUR |
+| Base price | Base | Price of the kWh, in EUR/kWh including taxes |
+| Peak hours price, off-peak hours price | HP/HC | Price of the kWh of each period |
+| Next price change | HP/HC | Date and time of the next peak/off-peak switch |
+
+For the Energy dashboard, choose "Use an entity with current price" and select the
+"Current price" sensor.
+
+Prices are recomputed at the exact moment of each period change, in French time. If
+the tariff grid cannot be downloaded anymore, the last known prices are used for 7
+days at most, then become unavailable rather than showing a possibly wrong value.
 
 ## Development
 

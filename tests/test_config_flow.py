@@ -1,17 +1,162 @@
-"""Tests of the config flow."""
+"""Tests of the config flow and of the options flow."""
 
+from __future__ import annotations
+
+from unittest.mock import patch
+
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.trve_edf.const import DOMAIN
+from custom_components.trve_edf.api import CreConnectionError, CreDataError
+from custom_components.trve_edf.config_flow import TrveEdfConfigFlow
+from custom_components.trve_edf.const import (
+    CONF_OFF_PEAK_HOURS,
+    CONF_OPTION,
+    CONF_POWER,
+    DOMAIN,
+)
+from custom_components.trve_edf.models import TariffGrid, TariffOption
+
+from .common import (
+    BASE_GRID,
+    CONFIG_FLOW_FETCH,
+    COORDINATOR_FETCH,
+    HPHC_GRID,
+    paris,
+    setup_contract,
+)
 
 
-async def test_user_flow_is_not_available_yet(hass: HomeAssistant) -> None:
-    """Until version 0.1.0, the user flow explains that it is not available."""
+@pytest.fixture(autouse=True)
+def _now(freezer: FrozenDateTimeFactory) -> None:
+    """Run the flows on a day of the current tariff period."""
+    freezer.move_to(paris(2026, 11, 11, 12, 0))
+
+
+async def _start(hass: HomeAssistant, option: TariffOption) -> dict:
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_OPTION: option.value}
+    )
+
+
+async def test_base_contract(hass: HomeAssistant) -> None:
+    """A Base contract only needs its subscribed power."""
+    with patch(CONFIG_FLOW_FETCH, return_value=BASE_GRID):
+        result = await _start(hass, TariffOption.BASE)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "power"
+    options = result["data_schema"].schema[CONF_POWER].config["options"]
+    assert options == [
+        {"value": "3", "label": "3 kVA"},
+        {"value": "6", "label": "6 kVA"},
+        {"value": "9", "label": "9 kVA"},
+    ]
+
+    with patch(COORDINATOR_FETCH, return_value=BASE_GRID):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_POWER: "6"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Tarifs réglementés EDF \u2013 Base 6 kVA"
+    assert result["data"] == {CONF_OPTION: "base", CONF_POWER: 6}
+    assert result["options"] == {}
+
+
+async def test_hphc_contract_with_off_peak_hours(hass: HomeAssistant) -> None:
+    """An HP/HC contract asks for valid off-peak hours, stored canonically."""
+    with patch(CONFIG_FLOW_FETCH, return_value=HPHC_GRID):
+        result = await _start(hass, TariffOption.HPHC)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_POWER: "9"}
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "off_peak"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_OFF_PEAK_HOURS: "25:00-06:00"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_OFF_PEAK_HOURS: "invalid_off_peak_hours"}
+
+    with patch(COORDINATOR_FETCH, return_value=HPHC_GRID):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_OFF_PEAK_HOURS: " 22:00 - 6:00 "}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Tarifs réglementés EDF \u2013 HP/HC 9 kVA"
+    assert result["data"] == {CONF_OPTION: "hphc", CONF_POWER: 9}
+    assert result["options"] == {CONF_OFF_PEAK_HOURS: "22:00-06:00"}
+
+
+@pytest.mark.parametrize(
+    ("side_effect", "reason"),
+    [
+        (CreConnectionError("offline"), "cannot_connect"),
+        (CreDataError("broken"), "invalid_data"),
+    ],
+)
+async def test_grid_download_errors(
+    hass: HomeAssistant, side_effect: Exception, reason: str
+) -> None:
+    """The flow stops with a clear reason when the grid cannot be used."""
+    with patch(CONFIG_FLOW_FETCH, side_effect=side_effect):
+        result = await _start(hass, TariffOption.BASE)
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "not_available_yet"
+    assert result["reason"] == reason
+
+
+async def test_no_power_in_force(hass: HomeAssistant) -> None:
+    """A grid without any row in force cannot be used."""
+    expired = TariffGrid(option=TariffOption.BASE, rows=BASE_GRID.rows[:1])
+    with patch(CONFIG_FLOW_FETCH, return_value=expired):
+        result = await _start(hass, TariffOption.BASE)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_power_available"
+
+
+async def test_options_flow_changes_off_peak_hours(hass: HomeAssistant) -> None:
+    """The off-peak hours of an HP/HC contract can be changed."""
+    entry = await setup_contract(hass, TariffOption.HPHC, off_peak="22:00-06:00")
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_OFF_PEAK_HOURS: "nope"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_OFF_PEAK_HOURS: "invalid_off_peak_hours"}
+
+    with patch(COORDINATOR_FETCH, return_value=HPHC_GRID):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_OFF_PEAK_HOURS: "12:30-14:30, 1:30-7:30"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {CONF_OFF_PEAK_HOURS: "01:30-07:30,12:30-14:30"}
+
+
+async def test_only_hphc_contracts_have_options(hass: HomeAssistant) -> None:
+    """Base contracts have nothing to change in the options."""
+    base = MockConfigEntry(domain=DOMAIN, data={CONF_OPTION: "base", CONF_POWER: 6})
+    hphc = MockConfigEntry(domain=DOMAIN, data={CONF_OPTION: "hphc", CONF_POWER: 6})
+
+    assert not TrveEdfConfigFlow.async_supports_options_flow(base)
+    assert TrveEdfConfigFlow.async_supports_options_flow(hphc)
