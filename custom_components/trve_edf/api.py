@@ -1,32 +1,45 @@
-"""Client of the regulated tariff grids published by the CRE.
+"""Clients of the regulated tariff grids (CRE) and of the Tempo colors.
 
 All the network access of the integration goes through this module. It receives
 the HTTP session from its caller (Home Assistant's shared session in the
-integration) and has no Home Assistant dependency.
+integration) and has no Home Assistant dependency. Every request has a timeout,
+and an invalid response is never kept.
 
 The CRE publishes one CSV file per tariff option on data.gouv.fr, with ``;`` as
 separator and a header line. The columns are read by their name, and only the
-amounts with taxes included (TTC) are kept. An invalid response is never kept:
-an invalid row that may still apply rejects the whole grid. An invalid row that
-ended before the current day cannot affect any price: when the caller gives the
-current day, such a row is skipped and logged instead.
+amounts with taxes included (TTC) are kept. An invalid row that may still apply
+rejects the whole grid. An invalid row that ended before the current day cannot
+affect any price: when the caller gives the current day, such a row is skipped
+and logged instead.
+
+The Tempo colors published by RTE are read from the history of Jour Tempo, a CSV
+file with one line per day. When it cannot be used, the colors are read from
+api-couleur-tempo.fr instead, one request per day.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import csv
 from datetime import date
 from decimal import Decimal
 from http import HTTPStatus
 import io
+import json
 import logging
 import re
 from typing import Final
 
 import aiohttp
 
-from .models import OPTION_PERIODS, TariffGrid, TariffOption, TariffPeriod, TariffRow
+from .models import (
+    OPTION_PRICES,
+    PriceKey,
+    TariffGrid,
+    TariffOption,
+    TariffRow,
+    TempoColor,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,10 +50,26 @@ CRE_GRID_URLS: Final[Mapping[TariffOption, str]] = {
     TariffOption.HPHC: (
         "https://www.data.gouv.fr/fr/datasets/r/f7303b3a-93c7-4242-813d-84919034c416"
     ),
+    TariffOption.TEMPO: (
+        "https://www.data.gouv.fr/fr/datasets/r/0c3d1d36-c412-4620-8566-e5cbb4fa2b5a"
+    ),
 }
 """Stable data.gouv.fr URL of the CRE tariff grid of each option.
 
 Each URL redirects to the file on the CRE website.
+"""
+
+JOUR_TEMPO_HISTORY_URL: Final = "https://jourtempo.fr/api/v1/tempo-historique.csv"
+"""History of the Tempo colors published by Jour Tempo, the primary source.
+
+A CSV file with one line per day since 1 September 2014, today and tomorrow
+included as soon as RTE has published their color.
+"""
+
+FALLBACK_TEMPO_URL: Final = "https://www.api-couleur-tempo.fr/api/jourTempo/{day}"
+"""Tempo color of one day on api-couleur-tempo.fr, the fallback source.
+
+``{day}`` is the day, written ``YYYY-MM-DD``.
 """
 
 REQUEST_TIMEOUT: Final = aiohttp.ClientTimeout(total=30)
@@ -50,14 +79,43 @@ _START: Final = "DATE_DEBUT"
 _END: Final = "DATE_FIN"
 _POWER: Final = "P_SOUSCRITE"
 _SUBSCRIPTION: Final = "PART_FIXE_TTC"
-_PRICE_COLUMNS: Final[Mapping[TariffOption, Mapping[TariffPeriod, str]]] = {
-    TariffOption.BASE: {TariffPeriod.BASE: "PART_VARIABLE_TTC"},
+_PRICE_COLUMNS: Final[Mapping[TariffOption, Mapping[PriceKey, str]]] = {
+    TariffOption.BASE: {PriceKey.BASE: "PART_VARIABLE_TTC"},
     TariffOption.HPHC: {
-        TariffPeriod.PEAK: "PART_VARIABLE_HP_TTC",
-        TariffPeriod.OFF_PEAK: "PART_VARIABLE_HC_TTC",
+        PriceKey.PEAK: "PART_VARIABLE_HP_TTC",
+        PriceKey.OFF_PEAK: "PART_VARIABLE_HC_TTC",
+    },
+    TariffOption.TEMPO: {
+        PriceKey.BLUE_PEAK: "PART_VARIABLE_HPBleu_TTC",
+        PriceKey.BLUE_OFF_PEAK: "PART_VARIABLE_HCBleu_TTC",
+        PriceKey.WHITE_PEAK: "PART_VARIABLE_HPBlanc_TTC",
+        PriceKey.WHITE_OFF_PEAK: "PART_VARIABLE_HCBlanc_TTC",
+        PriceKey.RED_PEAK: "PART_VARIABLE_HPRouge_TTC",
+        PriceKey.RED_OFF_PEAK: "PART_VARIABLE_HCRouge_TTC",
     },
 }
-"""Column of the price of each period, for each option."""
+"""Column of each price of the kWh, for each option."""
+
+_HISTORY: Final = "Jour Tempo history"
+"""Name of the primary Tempo source in the messages."""
+_HISTORY_DATE: Final = "date"
+_HISTORY_COLOR: Final = "couleur"
+_HISTORY_COLORS: Final[Mapping[str, TempoColor]] = {
+    "bleu": TempoColor.BLUE,
+    "blanc": TempoColor.WHITE,
+    "rouge": TempoColor.RED,
+}
+"""Tempo color of each color word of the history, in lower case."""
+
+_FALLBACK_DATE: Final = "dateJour"
+_FALLBACK_CODE: Final = "codeJour"
+_FALLBACK_COLORS: Final[Mapping[int, TempoColor | None]] = {
+    0: None,
+    1: TempoColor.BLUE,
+    2: TempoColor.WHITE,
+    3: TempoColor.RED,
+}
+"""Tempo color of each day code of the fallback source; 0 is not known yet."""
 
 _BOM: Final = "﻿"
 _FRENCH_DATE: Final = re.compile(
@@ -85,6 +143,17 @@ class CreDataError(TrveEdfError):
     """A downloaded CRE tariff grid is invalid."""
 
 
+class TempoConnectionError(TrveEdfError):
+    """The Tempo colors could not be downloaded.
+
+    Raised on a network error, a timeout or an HTTP error status.
+    """
+
+
+class TempoDataError(TrveEdfError):
+    """Downloaded Tempo colors are invalid."""
+
+
 async def async_fetch_grid(
     session: aiohttp.ClientSession,
     option: TariffOption,
@@ -109,22 +178,11 @@ async def async_fetch_grid(
         CreConnectionError: The grid could not be downloaded.
         CreDataError: The downloaded grid is invalid.
     """
-    try:
-        async with session.get(
-            CRE_GRID_URLS[option], timeout=REQUEST_TIMEOUT, allow_redirects=True
-        ) as response:
-            if response.status >= HTTPStatus.BAD_REQUEST:
-                raise CreConnectionError(
-                    f"The CRE tariff grid ({option}) could not be downloaded: "
-                    f"HTTP status {response.status}"
-                )
-            body = await response.read()
-    except (aiohttp.ClientError, TimeoutError) as err:
-        reason = str(err) or type(err).__name__
-        raise CreConnectionError(
-            f"The CRE tariff grid ({option}) could not be downloaded: {reason}"
-        ) from err
-    grid = parse_grid(option, _decode(option, body), today=today)
+    source = f"CRE tariff grid ({option})"
+    body = await _async_download(
+        session, CRE_GRID_URLS[option], source, CreConnectionError
+    )
+    grid = parse_grid(option, _decode(body, source, CreDataError), today=today)
     _LOGGER.debug("CRE tariff grid (%s) downloaded: %d rows", option, len(grid.rows))
     return grid
 
@@ -174,8 +232,134 @@ def parse_grid(
     return TariffGrid(option=option, rows=tuple(rows))
 
 
-def _decode(option: TariffOption, body: bytes) -> str:
-    """Decode the body of a CRE tariff grid."""
+async def async_fetch_tempo_colors(
+    session: aiohttp.ClientSession, days: Sequence[date]
+) -> dict[date, TempoColor]:
+    """Download the known Tempo colors of some days.
+
+    The colors are read from the Jour Tempo history. When it cannot be
+    downloaded or is invalid, a warning is logged and each day is asked to
+    api-couleur-tempo.fr instead. A body is decoded as UTF-8 (with or without
+    byte order mark); the history may also be Windows-1252 text. The colors are
+    taken from one source only, and an error never gives partial colors. When
+    the fallback source fails too, its error is raised while handling the error
+    of the history, which is its context: the traceback shows both.
+
+    Args:
+        session: HTTP session used for the requests.
+        days: Tempo days whose color is wanted. Without any day, nothing is
+            downloaded.
+
+    Returns:
+        The color of each requested day that is known; a day whose color is not
+        published yet is left out.
+
+    Raises:
+        TempoConnectionError: The history could not be used, and the fallback
+            source could not be downloaded.
+        TempoDataError: The history could not be used, and the fallback source
+            is invalid.
+    """
+    wanted = tuple(dict.fromkeys(days))
+    if not wanted:
+        return {}
+    try:
+        return await _async_fetch_history(session, wanted)
+    except (TempoConnectionError, TempoDataError) as err:
+        _LOGGER.warning("%s; using api-couleur-tempo.fr instead", err)
+        return await _async_fetch_fallback(session, wanted)
+
+
+def parse_tempo_history(text: str, days: Sequence[date]) -> dict[date, TempoColor]:
+    """Parse the Jour Tempo history and return the colors of some days.
+
+    The file has a header line, with ``,`` or ``;`` as separator (the one used
+    in the header). Columns are read by their name, ``date`` (``YYYY-MM-DD``)
+    and ``couleur`` (``bleu``, ``blanc`` or ``rouge``, in any case); the others
+    are ignored. Spaces around names and values are ignored, and so are blank
+    lines.
+
+    Every line must have a valid date: a line whose date cannot be read may be
+    the line of a requested day. Beyond its date, a line of another day is not
+    checked.
+
+    Args:
+        text: Content of the CSV file.
+        days: Days whose color is wanted.
+
+    Returns:
+        The color of each requested day that is known. A day without a line, or
+        whose color is empty, is not published yet: it is left out.
+
+    Raises:
+        TempoDataError: The history is invalid: it is empty or not valid CSV, a
+            required column is missing or duplicated, a date cannot be read,
+            the color of a requested day is unknown, or a requested day has two
+            lines with different colors.
+    """
+    text = text.removeprefix(_BOM)
+    header = text.splitlines()[0] if text else ""
+    reader = csv.DictReader(
+        io.StringIO(text, newline=""),
+        delimiter=";" if header.count(";") > header.count(",") else ",",
+        skipinitialspace=True,
+    )
+    try:
+        _read_history_header(reader)
+        return _read_history_colors(reader, frozenset(days))
+    except csv.Error as err:
+        raise TempoDataError(
+            f"The {_HISTORY} is not valid CSV, line {reader.reader.line_num}: {err}"
+        ) from err
+
+
+async def _async_download(
+    session: aiohttp.ClientSession,
+    url: str,
+    source: str,
+    error: type[TrveEdfError],
+) -> bytes:
+    """Download a resource and return its body.
+
+    The request has a timeout and follows the redirects.
+
+    Args:
+        session: HTTP session used for the request.
+        url: URL of the resource.
+        source: Name of the resource in the messages.
+        error: Error to raise when the resource cannot be downloaded.
+
+    Raises:
+        TrveEdfError: Of the given type, on a network error, a timeout or an
+            HTTP error status; chained to the cause.
+    """
+    try:
+        async with session.get(
+            url, timeout=REQUEST_TIMEOUT, allow_redirects=True
+        ) as response:
+            if response.status >= HTTPStatus.BAD_REQUEST:
+                raise error(
+                    f"The {source} could not be downloaded: "
+                    f"HTTP status {response.status}"
+                )
+            return await response.read()
+    except (aiohttp.ClientError, TimeoutError) as err:
+        reason = str(err) or type(err).__name__
+        raise error(f"The {source} could not be downloaded: {reason}") from err
+
+
+def _decode(body: bytes, source: str, error: type[TrveEdfError]) -> str:
+    """Decode a body as UTF-8, with or without byte order mark, or Windows-1252.
+
+    Args:
+        body: Body of the response.
+        source: Name of the resource in the messages.
+        error: Error to raise when the body cannot be decoded.
+
+    Raises:
+        TrveEdfError: Of the given type, when the body is neither UTF-8 nor
+            Windows-1252 text.
+    """
     try:
         return body.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -183,11 +367,12 @@ def _decode(option: TariffOption, body: bytes) -> str:
     try:
         text = body.decode("cp1252")
     except UnicodeDecodeError as err:
-        raise CreDataError(
-            f"The CRE tariff grid ({option}) is neither UTF-8 nor Windows-1252 text"
-        ) from err
-    _LOGGER.debug("CRE tariff grid (%s) decoded as Windows-1252", option)
+        raise error(f"The {source} is neither UTF-8 nor Windows-1252 text") from err
+    _LOGGER.debug("%s decoded as Windows-1252", source)
     return text
+
+
+# CRE tariff grids.
 
 
 def _required_columns(option: TariffOption) -> tuple[str, ...]:
@@ -298,11 +483,7 @@ def _parse_record(option: TariffOption, record: _Record) -> TariffRow | None:
     extra = record.get(None)
     if isinstance(extra, list) and any(field.strip() for field in extra):
         raise ValueError("the row has more fields than the header")
-    cells = {
-        name: value.strip() if isinstance(value, str) else None
-        for name, value in record.items()
-        if name is not None
-    }
+    cells = _cells(record)
     if not any(cells[column] for column in _amount_columns(option)):
         # A blank line, or a gap in the history: no price is known for this row.
         return None
@@ -310,6 +491,15 @@ def _parse_record(option: TariffOption, record: _Record) -> TariffRow | None:
     if any(cells[column] is None for column in required):
         raise ValueError("the row has fewer fields than the header")
     return _build_row(option, {column: cells[column] or "" for column in required})
+
+
+def _cells(record: _Record) -> dict[str, str | None]:
+    """Return the stripped cells of a record, None for the missing ones."""
+    return {
+        name: value.strip() if isinstance(value, str) else None
+        for name, value in record.items()
+        if name is not None
+    }
 
 
 def _build_row(option: TariffOption, values: Mapping[str, str]) -> TariffRow:
@@ -335,8 +525,8 @@ def _build_row(option: TariffOption, values: Mapping[str, str]) -> TariffRow:
         power_kva=_parse_power(values[_POWER]),
         subscription=_parse_amount(_SUBSCRIPTION, values[_SUBSCRIPTION]),
         prices={
-            period: _parse_amount(columns[period], values[columns[period]])
-            for period in OPTION_PERIODS[option]
+            key: _parse_amount(columns[key], values[columns[key]])
+            for key in OPTION_PRICES[option]
         },
     )
 
@@ -381,3 +571,147 @@ def _parse_amount(column: str, text: str) -> Decimal:
     if amount.is_signed():  # Also true for -0, which is no valid amount either.
         raise ValueError(f"{column} is negative: {text!r}")
     return amount
+
+
+# Tempo colors.
+
+
+async def _async_fetch_history(
+    session: aiohttp.ClientSession, days: Sequence[date]
+) -> dict[date, TempoColor]:
+    """Download the Jour Tempo history and return the colors of some days.
+
+    Raises:
+        TempoConnectionError: The history could not be downloaded.
+        TempoDataError: The history is invalid.
+    """
+    body = await _async_download(
+        session, JOUR_TEMPO_HISTORY_URL, _HISTORY, TempoConnectionError
+    )
+    colors = parse_tempo_history(_decode(body, _HISTORY, TempoDataError), days)
+    _LOGGER.debug(
+        "%s downloaded: %d of %d requested colors known",
+        _HISTORY,
+        len(colors),
+        len(days),
+    )
+    return colors
+
+
+def _read_history_header(reader: csv.DictReader[str]) -> None:
+    """Read and check the header line, ignoring spaces around the names."""
+    if reader.fieldnames is None:
+        raise TempoDataError(f"The {_HISTORY} is empty")
+    header = [name.strip() for name in reader.fieldnames]
+    reader.fieldnames = header
+    required = (_HISTORY_DATE, _HISTORY_COLOR)
+    if missing := [column for column in required if column not in header]:
+        raise TempoDataError(
+            f"The {_HISTORY} lacks the required columns: {', '.join(missing)}"
+        )
+    if duplicates := [column for column in required if header.count(column) > 1]:
+        raise TempoDataError(
+            f"The {_HISTORY} has duplicate columns: {', '.join(duplicates)}"
+        )
+
+
+def _read_history_colors(
+    reader: csv.DictReader[str], days: frozenset[date]
+) -> dict[date, TempoColor]:
+    """Read the lines that follow the header and keep the requested colors.
+
+    Raises:
+        TempoDataError: A date cannot be read, the color of a requested day is
+            unknown, or a requested day has two different colors.
+    """
+    colors: dict[date, TempoColor] = {}
+    for record in reader:
+        cells = _cells(record)
+        if not any(cells.values()):
+            continue  # A blank line.
+        line = f"Line {reader.line_num} of the {_HISTORY}"
+        day_text = cells[_HISTORY_DATE] or ""
+        if (day := _parse_iso_date(day_text)) is None:
+            raise TempoDataError(
+                f"{line}: {_HISTORY_DATE} is not a valid date: {day_text!r}"
+            )
+        if day not in days or not (color_text := cells[_HISTORY_COLOR]):
+            continue  # Another day, or a color not published yet.
+        if (color := _HISTORY_COLORS.get(color_text.lower())) is None:
+            raise TempoDataError(
+                f"{line}: unknown {_HISTORY_COLOR} of {day.isoformat()}: "
+                f"{color_text!r}"
+            )
+        if colors.setdefault(day, color) != color:
+            raise TempoDataError(
+                f"{line}: {day.isoformat()} has two colors: {colors[day]} and {color}"
+            )
+    return colors
+
+
+def _parse_iso_date(text: str) -> date | None:
+    """Parse a ``YYYY-MM-DD`` date, or return None if the text is not one."""
+    if (match := _ISO_DATE.fullmatch(text)) is None:
+        return None
+    try:
+        return date(int(match["year"]), int(match["month"]), int(match["day"]))
+    except ValueError:
+        return None
+
+
+async def _async_fetch_fallback(
+    session: aiohttp.ClientSession, days: Sequence[date]
+) -> dict[date, TempoColor]:
+    """Download the Tempo colors of some days from api-couleur-tempo.fr.
+
+    Raises:
+        TempoConnectionError: The color of a day could not be downloaded.
+        TempoDataError: The color of a day is invalid.
+    """
+    colors: dict[date, TempoColor] = {}
+    for day in days:
+        source = f"Tempo color of {day.isoformat()} from api-couleur-tempo.fr"
+        body = await _async_download(
+            session,
+            FALLBACK_TEMPO_URL.format(day=day.isoformat()),
+            source,
+            TempoConnectionError,
+        )
+        if (color := _parse_fallback_color(source, day, body)) is not None:
+            colors[day] = color
+    _LOGGER.debug(
+        "Tempo colors downloaded from api-couleur-tempo.fr: %d of %d known",
+        len(colors),
+        len(days),
+    )
+    return colors
+
+
+def _parse_fallback_color(source: str, day: date, body: bytes) -> TempoColor | None:
+    """Parse the color of a day returned by api-couleur-tempo.fr.
+
+    Returns:
+        The color of the day, or None when it is not known yet.
+
+    Raises:
+        TempoDataError: The body is not the JSON color of the day.
+    """
+    try:
+        data = json.loads(body.decode("utf-8-sig"))
+    except ValueError as err:  # UnicodeDecodeError is a ValueError too.
+        raise TempoDataError(f"The {source} is not valid JSON: {err}") from err
+    if not isinstance(data, dict):
+        raise TempoDataError(f"The {source} is not a JSON object")
+    if (answered := data.get(_FALLBACK_DATE)) != day.isoformat():
+        raise TempoDataError(
+            f"The {source} is for another day: {_FALLBACK_DATE} is {answered!r}"
+        )
+    code = data.get(_FALLBACK_CODE)
+    # A JSON boolean is a Python int too, but no valid code.
+    if (
+        isinstance(code, bool)
+        or not isinstance(code, int)
+        or code not in _FALLBACK_COLORS
+    ):
+        raise TempoDataError(f"The {source} has an invalid {_FALLBACK_CODE}: {code!r}")
+    return _FALLBACK_COLORS[code]

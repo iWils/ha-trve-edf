@@ -1,4 +1,4 @@
-"""Tests of the client of the CRE regulated tariff grids."""
+"""Tests of the clients of the CRE regulated tariff grids and the Tempo colors."""
 
 from __future__ import annotations
 
@@ -23,24 +23,32 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
 
 from custom_components.trve_edf.api import (
     CRE_GRID_URLS,
+    FALLBACK_TEMPO_URL,
+    JOUR_TEMPO_HISTORY_URL,
     REQUEST_TIMEOUT,
     CreConnectionError,
     CreDataError,
+    TempoConnectionError,
+    TempoDataError,
     TrveEdfError,
     async_fetch_grid,
+    async_fetch_tempo_colors,
     parse_grid,
+    parse_tempo_history,
 )
 from custom_components.trve_edf.models import (
-    OPTION_PERIODS,
+    OPTION_PRICES,
+    PriceKey,
     TariffGrid,
     TariffOption,
-    TariffPeriod,
     TariffRow,
+    TempoColor,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
 BASE_FIXTURE = "cre_base.csv"
 HPHC_FIXTURE = "cre_hphc.csv"
+TEMPO_FIXTURE = "cre_tempo.csv"
 
 AUG_2025 = date(2025, 8, 1)
 JAN_2026 = date(2026, 1, 31)
@@ -58,7 +66,7 @@ def base_row(
         end=end,
         power_kva=power,
         subscription=Decimal(subscription),
-        prices={TariffPeriod.BASE: Decimal(price)},
+        prices={PriceKey.BASE: Decimal(price)},
     )
 
 
@@ -78,11 +86,45 @@ def hphc_row(
         power_kva=power,
         subscription=Decimal(subscription),
         prices={
-            TariffPeriod.PEAK: Decimal(peak),
-            TariffPeriod.OFF_PEAK: Decimal(off_peak),
+            PriceKey.PEAK: Decimal(peak),
+            PriceKey.OFF_PEAK: Decimal(off_peak),
         },
     )
 
+
+def tempo_row(
+    start: date,
+    end: date | None,
+    power: int,
+    subscription: str,
+    prices: Mapping[PriceKey, str],
+) -> TariffRow:
+    """Return a row of the Tempo option."""
+    return TariffRow(
+        start=start,
+        end=end,
+        power_kva=power,
+        subscription=Decimal(subscription),
+        prices={key: Decimal(price) for key, price in prices.items()},
+    )
+
+
+TEMPO_PRICES_FEB_2026: Mapping[PriceKey, str] = {
+    PriceKey.BLUE_PEAK: "0.1612",
+    PriceKey.BLUE_OFF_PEAK: "0.1325",
+    PriceKey.WHITE_PEAK: "0.1871",
+    PriceKey.WHITE_OFF_PEAK: "0.1499",
+    PriceKey.RED_PEAK: "0.706",
+    PriceKey.RED_OFF_PEAK: "0.1575",
+}
+TEMPO_PRICES_AUG_2026: Mapping[PriceKey, str] = {
+    PriceKey.BLUE_PEAK: "0.1654",
+    PriceKey.BLUE_OFF_PEAK: "0.1356",
+    PriceKey.WHITE_PEAK: "0.1921",
+    PriceKey.WHITE_OFF_PEAK: "0.1536",
+    PriceKey.RED_PEAK: "0.7295",
+    PriceKey.RED_OFF_PEAK: "0.1615",
+}
 
 BASE_GRID = TariffGrid(
     option=TariffOption.BASE,
@@ -114,9 +156,20 @@ HPHC_GRID = TariffGrid(
 )
 """Content of the HP/HC fixture."""
 
+TEMPO_GRID = TariffGrid(
+    option=TariffOption.TEMPO,
+    rows=(
+        tempo_row(FEB_2026, JUL_2026, 9, "233.44", TEMPO_PRICES_FEB_2026),
+        tempo_row(AUG_2026, None, 6, "189.9802924", TEMPO_PRICES_AUG_2026),
+        tempo_row(AUG_2026, None, 9, "237.3436191", TEMPO_PRICES_AUG_2026),
+    ),
+)
+"""Content of the Tempo fixture."""
+
 GRIDS: Mapping[TariffOption, tuple[str, TariffGrid]] = {
     TariffOption.BASE: (BASE_FIXTURE, BASE_GRID),
     TariffOption.HPHC: (HPHC_FIXTURE, HPHC_GRID),
+    TariffOption.TEMPO: (TEMPO_FIXTURE, TEMPO_GRID),
 }
 """Fixture file and expected grid of each option."""
 
@@ -129,10 +182,25 @@ HPHC_HEADER = (
 )
 HPHC_LINE = "2026-08-01;;6;190.8131821;0.1589;0.2142"
 HPHC_ROW = hphc_row(AUG_2026, None, 6, "190.8131821", off_peak="0.1589", peak="0.2142")
+TEMPO_PRICE_COLUMNS = (
+    "PART_VARIABLE_HPBleu_TTC",
+    "PART_VARIABLE_HCBleu_TTC",
+    "PART_VARIABLE_HPBlanc_TTC",
+    "PART_VARIABLE_HCBlanc_TTC",
+    "PART_VARIABLE_HPRouge_TTC",
+    "PART_VARIABLE_HCRouge_TTC",
+)
+"""Price columns of the Tempo option, in the order of the price keys."""
+TEMPO_HEADER = ";".join(
+    ("DATE_DEBUT", "DATE_FIN", "P_SOUSCRITE", "PART_FIXE_TTC", *TEMPO_PRICE_COLUMNS)
+)
+TEMPO_LINE = "01/08/2026;;6;189,9802924;0,1654;0,1356;0,1921;0,1536;0,7295;0,1615"
+TEMPO_ROW = tempo_row(AUG_2026, None, 6, "189.9802924", TEMPO_PRICES_AUG_2026)
 
 REQUIRED_COLUMNS: Mapping[TariffOption, tuple[str, ...]] = {
     TariffOption.BASE: tuple(BASE_HEADER.split(";")),
     TariffOption.HPHC: tuple(HPHC_HEADER.split(";")),
+    TariffOption.TEMPO: tuple(TEMPO_HEADER.split(";")),
 }
 """Columns that a grid of each option must have."""
 
@@ -265,6 +333,9 @@ def test_every_option_has_a_grid_url() -> None:
     assert CRE_GRID_URLS[TariffOption.HPHC] == (
         "https://www.data.gouv.fr/fr/datasets/r/f7303b3a-93c7-4242-813d-84919034c416"
     )
+    assert CRE_GRID_URLS[TariffOption.TEMPO] == (
+        "https://www.data.gouv.fr/fr/datasets/r/0c3d1d36-c412-4620-8566-e5cbb4fa2b5a"
+    )
 
 
 def test_request_timeout() -> None:
@@ -278,6 +349,13 @@ def test_errors_share_a_base_class() -> None:
     assert issubclass(CreDataError, TrveEdfError)
     assert not issubclass(CreConnectionError, CreDataError)
     assert not issubclass(CreDataError, CreConnectionError)
+    assert issubclass(TempoConnectionError, TrveEdfError)
+    assert issubclass(TempoDataError, TrveEdfError)
+    assert not issubclass(TempoConnectionError, TempoDataError)
+    assert not issubclass(TempoDataError, TempoConnectionError)
+    cre_errors = (CreConnectionError, CreDataError)
+    assert not issubclass(TempoConnectionError, cre_errors)
+    assert not issubclass(TempoDataError, cre_errors)
 
 
 # Parsing of valid grids.
@@ -299,7 +377,7 @@ def test_prices_cover_the_periods_of_the_option(option: TariffOption) -> None:
     grid = parse_grid(option, read_fixture(name))
 
     assert grid.option is option
-    assert all(tuple(row.prices) == OPTION_PERIODS[option] for row in grid.rows)
+    assert all(tuple(row.prices) == OPTION_PRICES[option] for row in grid.rows)
 
 
 def test_peak_and_off_peak_prices_are_not_swapped() -> None:
@@ -307,8 +385,22 @@ def test_peak_and_off_peak_prices_are_not_swapped() -> None:
     grid = parse_grid(TariffOption.HPHC, csv_text(HPHC_HEADER, HPHC_LINE))
 
     prices = grid.rows[0].prices
-    assert prices[TariffPeriod.PEAK] == Decimal("0.2142")
-    assert prices[TariffPeriod.OFF_PEAK] == Decimal("0.1589")
+    assert prices[PriceKey.PEAK] == Decimal("0.2142")
+    assert prices[PriceKey.OFF_PEAK] == Decimal("0.1589")
+
+
+def test_tempo_prices_are_not_swapped() -> None:
+    """Each Tempo price is read from the column of its color and period."""
+    grid = parse_grid(TariffOption.TEMPO, csv_text(TEMPO_HEADER, TEMPO_LINE))
+
+    assert grid.rows[0].prices == {
+        PriceKey.BLUE_PEAK: Decimal("0.1654"),
+        PriceKey.BLUE_OFF_PEAK: Decimal("0.1356"),
+        PriceKey.WHITE_PEAK: Decimal("0.1921"),
+        PriceKey.WHITE_OFF_PEAK: Decimal("0.1536"),
+        PriceKey.RED_PEAK: Decimal("0.7295"),
+        PriceKey.RED_OFF_PEAK: Decimal("0.1615"),
+    }
 
 
 def test_amounts_are_exact_decimals() -> None:
@@ -321,7 +413,7 @@ def test_amounts_are_exact_decimals() -> None:
     row = grid.rows[0]
     assert isinstance(row.subscription, Decimal)
     assert str(row.subscription) == "190.8131821000000000000001"
-    assert str(row.prices[TariffPeriod.BASE]) == "0.20010"
+    assert str(row.prices[PriceKey.BASE]) == "0.20010"
 
 
 @pytest.mark.parametrize(
@@ -329,6 +421,7 @@ def test_amounts_are_exact_decimals() -> None:
     [
         (TariffOption.BASE, to_iso_formats),
         (TariffOption.HPHC, to_french_formats),
+        (TariffOption.TEMPO, to_iso_formats),
     ],
 )
 def test_date_and_decimal_formats_are_interchangeable(
@@ -380,7 +473,7 @@ def test_decimal_formats(
     )
 
     row = grid.rows[0]
-    assert (row.subscription, row.prices[TariffPeriod.BASE]) == (
+    assert (row.subscription, row.prices[PriceKey.BASE]) == (
         Decimal(expected[0]),
         Decimal(expected[1]),
     )
@@ -506,6 +599,14 @@ def test_blank_lines_are_skipped() -> None:
             BASE_ROW,
             id="base short row without amounts",
         ),
+        pytest.param(
+            TariffOption.TEMPO,
+            TEMPO_HEADER,
+            "01/08/2010;31/07/2011;36;;;;;;;",
+            TEMPO_LINE,
+            TEMPO_ROW,
+            id="tempo",
+        ),
     ],
 )
 def test_rows_without_any_amount_are_skipped(
@@ -566,7 +667,11 @@ def test_missing_column(option: TariffOption, column: str) -> None:
     ("option", "name", "missing"),
     [
         (TariffOption.BASE, HPHC_FIXTURE, "PART_VARIABLE_TTC"),
+        (TariffOption.BASE, TEMPO_FIXTURE, "PART_VARIABLE_TTC"),
         (TariffOption.HPHC, BASE_FIXTURE, "PART_VARIABLE_HP_TTC, PART_VARIABLE_HC_TTC"),
+        (TariffOption.HPHC, TEMPO_FIXTURE, "PART_VARIABLE_HP_TTC, PART_VARIABLE_HC_TTC"),
+        (TariffOption.TEMPO, BASE_FIXTURE, ", ".join(TEMPO_PRICE_COLUMNS)),
+        (TariffOption.TEMPO, HPHC_FIXTURE, ", ".join(TEMPO_PRICE_COLUMNS)),
     ],
 )
 def test_grid_of_another_option(option: TariffOption, name: str, missing: str) -> None:
@@ -803,6 +908,40 @@ def test_invalid_hphc_row(line: str, message: str) -> None:
         match=rf"^Line 2 of the CRE tariff grid \(hphc\): {re.escape(message)}$",
     ):
         parse_grid(TariffOption.HPHC, csv_text(HPHC_HEADER, line))
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        pytest.param(
+            "01/08/2026;;6;189,9802924;0,1654;0,1356;0,1921;0,1536;;0,1615",
+            "PART_VARIABLE_HPRouge_TTC is empty",
+            id="no red peak price",
+        ),
+        pytest.param(
+            "01/08/2026;;6;189,9802924;0,1654;;0,1921;0,1536;0,7295;0,1615",
+            "PART_VARIABLE_HCBleu_TTC is empty",
+            id="no blue off-peak price",
+        ),
+        pytest.param(
+            "01/08/2026;;6;189,9802924;0,1654;0,1356;0,1921;-0,1536;0,7295;0,1615",
+            "PART_VARIABLE_HCBlanc_TTC is negative: '-0,1536'",
+            id="negative white off-peak price",
+        ),
+        pytest.param(
+            "01/08/2026;;6;189,9802924;0,1654;0,1356;x;0,1536;0,7295;0,1615",
+            "PART_VARIABLE_HPBlanc_TTC is not an amount: 'x'",
+            id="invalid white peak price",
+        ),
+    ],
+)
+def test_invalid_tempo_row(line: str, message: str) -> None:
+    """A Tempo row with only some of its six prices is rejected."""
+    with pytest.raises(
+        CreDataError,
+        match=rf"^Line 2 of the CRE tariff grid \(tempo\): {re.escape(message)}$",
+    ):
+        parse_grid(TariffOption.TEMPO, csv_text(TEMPO_HEADER, line))
 
 
 def test_missing_end_is_not_taken_as_in_force() -> None:
@@ -1230,3 +1369,469 @@ async def test_fetch_grid_invalid_content(
         await async_fetch_grid(async_get_clientsession(hass), TariffOption.BASE)
 
     assert not isinstance(error.value, CreConnectionError)
+
+
+# Tempo colors: constants.
+
+HISTORY_FIXTURE = "jourtempo_history.csv"
+HISTORY_HEADER = "date,couleur,saison"
+YESTERDAY = date(2026, 11, 10)
+TOMORROW = date(2026, 11, 12)
+DAYS = (YESTERDAY, TODAY, TOMORROW)
+"""Days asked by the integration: yesterday, today and tomorrow."""
+KNOWN_COLORS = {YESTERDAY: TempoColor.BLUE, TODAY: TempoColor.BLUE}
+"""Colors of DAYS in the history fixture: tomorrow is not published yet."""
+WHITE_DAY = date(2026, 1, 9)
+RED_DAY = date(2026, 1, 10)
+FIXTURE_COLORS = {
+    WHITE_DAY: TempoColor.WHITE,
+    RED_DAY: TempoColor.RED,
+    **{date(2026, 11, day): TempoColor.BLUE for day in range(7, 12)},
+}
+"""Content of the history fixture."""
+
+FALLBACK_LABELS = {1: "Bleu", 2: "Blanc", 3: "Rouge"}
+
+
+def history_text(*lines: str, header: str = HISTORY_HEADER) -> str:
+    """Return a history with the given lines after its header."""
+    return csv_text(header, *lines)
+
+
+def fallback_url(day: date) -> str:
+    """Return the URL of the color of a day on the fallback source."""
+    return FALLBACK_TEMPO_URL.format(day=day.isoformat())
+
+
+def fallback_answer(day: date, code: int) -> dict[str, object]:
+    """Return the answer of the fallback source for a day."""
+    answer: dict[str, object] = {
+        "dateJour": day.isoformat(),
+        "codeJour": code,
+        "periode": "2026-2027" if day >= date(2026, 9, 1) else "2025-2026",
+    }
+    if code in FALLBACK_LABELS:
+        answer["libCouleur"] = FALLBACK_LABELS[code]
+    return answer
+
+
+def mock_fallback(
+    aioclient_mock: AiohttpClientMocker, codes: Mapping[date, int] | None = None
+) -> None:
+    """Mock the fallback source; by default, the colors of DAYS are KNOWN_COLORS."""
+    if codes is None:
+        codes = {YESTERDAY: 1, TODAY: 1, TOMORROW: 0}
+    for day, code in codes.items():
+        aioclient_mock.get(fallback_url(day), json=fallback_answer(day, code))
+
+
+def requested_urls(aioclient_mock: AiohttpClientMocker) -> list[str]:
+    """Return the URLs requested, in order."""
+    return [str(call[1]) for call in aioclient_mock.mock_calls]
+
+
+def exception_chain(error: BaseException) -> list[BaseException]:
+    """Return an error and its causes and contexts, as shown by a traceback."""
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+# Tempo colors: constants and errors.
+
+
+def test_tempo_urls() -> None:
+    """The colors come from Jour Tempo, else from api-couleur-tempo.fr."""
+    assert JOUR_TEMPO_HISTORY_URL == "https://jourtempo.fr/api/v1/tempo-historique.csv"
+    assert fallback_url(TODAY) == (
+        "https://www.api-couleur-tempo.fr/api/jourTempo/2026-11-11"
+    )
+
+
+# Tempo colors: parsing of the history.
+
+
+def test_parse_history_fixture() -> None:
+    """Every color word of the history is read."""
+    colors = parse_tempo_history(read_fixture(HISTORY_FIXTURE), list(FIXTURE_COLORS))
+
+    assert colors == FIXTURE_COLORS
+
+
+def test_parse_history_requested_days_only() -> None:
+    """Only the requested days are returned; a day not published yet is absent."""
+    colors = parse_tempo_history(read_fixture(HISTORY_FIXTURE), DAYS)
+
+    assert colors == KNOWN_COLORS
+
+
+def test_parse_history_without_days() -> None:
+    """Without any requested day, no color is returned."""
+    assert parse_tempo_history(read_fixture(HISTORY_FIXTURE), []) == {}
+
+
+@pytest.mark.parametrize("separator", [",", ";"])
+def test_parse_history_separators(separator: str) -> None:
+    """The separator of the header, a comma or a semicolon, is used."""
+    text = read_fixture(HISTORY_FIXTURE).replace(",", separator)
+
+    assert parse_tempo_history(text, list(FIXTURE_COLORS)) == FIXTURE_COLORS
+
+
+def test_parse_history_separator_of_the_header() -> None:
+    """The separator is the one of the header, whatever the values hold."""
+    text = history_text("2026-11-11;bleu;2026,2027", header="date;couleur;saison")
+
+    assert parse_tempo_history(text, [TODAY]) == {TODAY: TempoColor.BLUE}
+
+
+@pytest.mark.parametrize(
+    "convert",
+    [
+        pytest.param(lambda text: "﻿" + text, id="BOM"),
+        pytest.param(lambda text: text.replace("\n", "\r\n"), id="CRLF"),
+        pytest.param(lambda text: text.replace("\n", "\r"), id="CR"),
+        pytest.param(
+            lambda text: "﻿" + text.replace(",", ";").replace("\n", "\r\n"),
+            id="BOM, semicolon and CRLF",
+        ),
+    ],
+)
+def test_parse_history_bom_and_line_endings(convert: Callable[[str], str]) -> None:
+    """A byte order mark and Windows or old Mac line endings are tolerated."""
+    text = convert(read_fixture(HISTORY_FIXTURE))
+
+    assert parse_tempo_history(text, list(FIXTURE_COLORS)) == FIXTURE_COLORS
+
+
+def test_parse_history_spaces_and_case() -> None:
+    """Spaces around names and values, and the case of the colors, are ignored."""
+    text = history_text(
+        " 2026-01-09 , Blanc ,2025-2026",
+        '2026-01-10,\t"ROUGE"  ,2025-2026',
+        "2026-11-11 ,bLeU, 2026-2027",
+        header=" date ,\tcouleur ,saison ",
+    )
+
+    assert parse_tempo_history(text, [WHITE_DAY, RED_DAY, TODAY]) == {
+        WHITE_DAY: TempoColor.WHITE,
+        RED_DAY: TempoColor.RED,
+        TODAY: TempoColor.BLUE,
+    }
+
+
+def test_parse_history_columns_by_name() -> None:
+    """The order of the columns does not matter, extra columns are ignored."""
+    text = history_text(
+        "x,2026-2027,bleu,2026-11-10,y",
+        "x,2026-2027,blanc,2026-11-11,y",
+        header="id,saison,couleur,date,commentaire",
+    )
+
+    assert parse_tempo_history(text, DAYS) == {
+        YESTERDAY: TempoColor.BLUE,
+        TODAY: TempoColor.WHITE,
+    }
+
+
+def test_parse_history_season_not_required() -> None:
+    """Only the date and the color are needed."""
+    text = history_text("2026-11-11,rouge", header="date,couleur")
+
+    assert parse_tempo_history(text, DAYS) == {TODAY: TempoColor.RED}
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        pytest.param("2026-11-12,,2026-2027", id="empty"),
+        pytest.param("2026-11-12,  ,2026-2027", id="spaces"),
+        pytest.param('2026-11-12,"",2026-2027', id="quoted empty"),
+        pytest.param("2026-11-12", id="no color cell"),
+    ],
+)
+def test_parse_history_color_not_published(line: str) -> None:
+    """A day whose color is empty is not published yet: it is absent."""
+    text = read_fixture(HISTORY_FIXTURE) + f"{line}\n"
+
+    assert parse_tempo_history(text, DAYS) == KNOWN_COLORS
+
+
+def test_parse_history_empty_line_then_color() -> None:
+    """An empty color does not hide the color of the same day on another line."""
+    text = history_text("2026-11-12,,2026-2027", "2026-11-12,blanc,2026-2027")
+
+    assert parse_tempo_history(text, [TOMORROW]) == {TOMORROW: TempoColor.WHITE}
+
+
+def test_parse_history_blank_lines() -> None:
+    """Empty lines, lines of spaces and lines of empty cells are skipped."""
+    text = history_text("", "2026-11-10,bleu,2026-2027", "   ", ",,", "\t", ",,,")
+
+    assert parse_tempo_history(text, DAYS) == {YESTERDAY: TempoColor.BLUE}
+
+
+def test_parse_history_same_color_twice() -> None:
+    """A day given twice with the same color is consistent."""
+    text = history_text("2026-11-11,bleu,2026-2027", "2026-11-11,BLEU,2026-2027")
+
+    assert parse_tempo_history(text, DAYS) == {TODAY: TempoColor.BLUE}
+
+
+def test_parse_history_other_days_are_not_checked() -> None:
+    """Beyond their date, the lines of other days are not checked."""
+    text = history_text(
+        "2014-09-01,inconnu,2014-2015",
+        "2026-11-09,bleu,2026-2027",
+        "2026-11-09,rouge,2026-2027",
+        "2026-11-08,bleu,2026-2027,x,y",
+        "2026-11-07",
+        "2026-11-11,bleu,2026-2027",
+    )
+
+    assert parse_tempo_history(text, DAYS) == {TODAY: TempoColor.BLUE}
+
+
+@pytest.mark.parametrize("text", ["", "﻿"])
+def test_parse_history_empty(text: str) -> None:
+    """A file without a header is rejected."""
+    with pytest.raises(TempoDataError, match=r"^The Jour Tempo history is empty$"):
+        parse_tempo_history(text, DAYS)
+
+
+@pytest.mark.parametrize(
+    ("header", "missing"),
+    [
+        pytest.param("couleur,saison", "date", id="no date"),
+        pytest.param("date,saison", "couleur", id="no color"),
+        pytest.param("jour,color,season", "date, couleur", id="other names"),
+        pytest.param("Date,Couleur,Saison", "date, couleur", id="other case"),
+        pytest.param("<!DOCTYPE html>", "date, couleur", id="HTML page"),
+        pytest.param("date couleur saison", "date, couleur", id="other separator"),
+    ],
+)
+def test_parse_history_missing_column(header: str, missing: str) -> None:
+    """A history without the date or the color column is rejected."""
+    text = history_text("2026-11-11,bleu,2026-2027", header=header)
+
+    with pytest.raises(
+        TempoDataError,
+        match=rf"^The Jour Tempo history lacks the required columns: {missing}$",
+    ):
+        parse_tempo_history(text, DAYS)
+
+
+def test_parse_history_duplicate_column() -> None:
+    """A required column that appears twice is ambiguous: the file is rejected."""
+    text = history_text(
+        "2026-11-11,bleu,2026-2027,rouge", header=f"{HISTORY_HEADER}, couleur "
+    )
+
+    with pytest.raises(
+        TempoDataError,
+        match=r"^The Jour Tempo history has duplicate columns: couleur$",
+    ):
+        parse_tempo_history(text, DAYS)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("", id="empty"),
+        pytest.param("demain", id="text"),
+        pytest.param("11/11/2026", id="French format"),
+        pytest.param("2026-11-1", id="truncated"),
+        pytest.param("20261111", id="basic ISO format"),
+        pytest.param("2026-11-11T06:00:00", id="date and time"),
+        pytest.param("2026-02-30", id="impossible date"),
+        pytest.param("2026-13-01", id="impossible month"),
+    ],
+)
+def test_parse_history_invalid_date(value: str) -> None:
+    """A line whose date cannot be read may be a requested day: it is an error."""
+    text = history_text("2026-11-10,bleu,2026-2027", f"{value},bleu,2026-2027")
+
+    with pytest.raises(
+        TempoDataError,
+        match=rf"^Line 3 of the Jour Tempo history: date is not a valid date: "
+        rf"{re.escape(repr(value))}$",
+    ):
+        parse_tempo_history(text, DAYS)
+
+
+def test_parse_history_missing_date_cell() -> None:
+    """A line too short to have a date has no valid date."""
+    text = history_text("bleu", header="couleur,saison,date")
+
+    with pytest.raises(
+        TempoDataError,
+        match=r"^Line 2 of the Jour Tempo history: date is not a valid date: ''$",
+    ):
+        parse_tempo_history(text, DAYS)
+
+
+@pytest.mark.parametrize(
+    "value", ["vert", "inconnu", "blue", "bleu clair", "1", "b", "ble"]
+)
+def test_parse_history_unknown_color(value: str) -> None:
+    """An unknown color word of a requested day is an error."""
+    text = history_text("2026-11-10,bleu,2026-2027", f"2026-11-11,{value},2026-2027")
+
+    with pytest.raises(
+        TempoDataError,
+        match=rf"^Line 3 of the Jour Tempo history: unknown couleur of 2026-11-11: "
+        rf"{re.escape(repr(value))}$",
+    ):
+        parse_tempo_history(text, DAYS)
+
+
+def test_parse_history_conflicting_colors() -> None:
+    """Two different colors for a requested day are an error."""
+    text = history_text(
+        "2026-11-11,bleu,2026-2027",
+        "2026-11-10,bleu,2026-2027",
+        "2026-11-11,blanc,2026-2027",
+    )
+
+    with pytest.raises(
+        TempoDataError,
+        match=r"^Line 4 of the Jour Tempo history: 2026-11-11 has two colors: "
+        r"blue and white$",
+    ):
+        parse_tempo_history(text, DAYS)
+
+
+def test_parse_history_invalid_csv() -> None:
+    """An error of the CSV reader, even on another day, is reported as invalid."""
+    huge = '"' + "x" * 200_000 + '"'
+    text = history_text("2026-11-11,bleu,2026-2027", f"2014-09-01,{huge},2014-2015")
+
+    with pytest.raises(
+        TempoDataError, match=r"^The Jour Tempo history is not valid CSV, line 3: "
+    ) as error:
+        parse_tempo_history(text, DAYS)
+
+    assert isinstance(error.value.__cause__, csv.Error)
+
+
+# Tempo colors: download from the history.
+
+
+async def test_fetch_tempo_colors(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The colors of the requested days are read from the Jour Tempo history."""
+    aioclient_mock.get(
+        JOUR_TEMPO_HISTORY_URL, content=(FIXTURES / HISTORY_FIXTURE).read_bytes()
+    )
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert colors == KNOWN_COLORS
+    assert requested_urls(aioclient_mock) == [JOUR_TEMPO_HISTORY_URL]
+    assert warnings(caplog) == []
+
+
+async def test_fetch_tempo_colors_without_days(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """Without any requested day, nothing is downloaded."""
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), [])
+
+    assert colors == {}
+    assert aioclient_mock.call_count == 0
+
+
+async def test_fetch_tempo_colors_request_options(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """The requests have a timeout, follow redirects and add no header."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, status=HTTPStatus.SERVICE_UNAVAILABLE)
+    mock_fallback(aioclient_mock, {TODAY: 1})
+    session = async_get_clientsession(hass)
+
+    with patch.object(
+        aiohttp.ClientSession,
+        "get",
+        autospec=True,
+        side_effect=aiohttp.ClientSession.get,
+    ) as get:
+        await async_fetch_tempo_colors(session, [TODAY])
+
+    assert get.call_args_list == [
+        call(session, JOUR_TEMPO_HISTORY_URL, timeout=REQUEST_TIMEOUT, allow_redirects=True),
+        call(session, fallback_url(TODAY), timeout=REQUEST_TIMEOUT, allow_redirects=True),
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(
+            b"\xef\xbb\xbf" + (FIXTURES / HISTORY_FIXTURE).read_bytes(), id="BOM"
+        ),
+        pytest.param(
+            history_text(
+                "2026-11-10,bleu,2026-2027,Été", header=f"{HISTORY_HEADER},remarque"
+            ).encode("utf-8"),
+            id="UTF-8",
+        ),
+        pytest.param(
+            history_text(
+                "2026-11-10,bleu,2026-2027,Été", header=f"{HISTORY_HEADER},remarque"
+            ).encode("cp1252"),
+            id="Windows-1252",
+        ),
+    ],
+)
+async def test_fetch_tempo_colors_encodings(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, content: bytes
+) -> None:
+    """The history is read as UTF-8, with or without BOM, else as Windows-1252."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, content=content)
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert colors[YESTERDAY] is TempoColor.BLUE
+    assert aioclient_mock.call_count == 1
+
+
+async def test_fetch_tempo_colors_windows_1252_is_logged(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A Windows-1252 history is decoded with the fallback encoding, logged."""
+    content = history_text(
+        "2026-11-11,rouge,2026-2027,Été", header=f"{HISTORY_HEADER},remarque"
+    ).encode("cp1252")
+    with pytest.raises(UnicodeDecodeError):
+        content.decode("utf-8")
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, content=content)
+    caplog.set_level("DEBUG", logger=API_LOGGER)
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert colors == {TODAY: TempoColor.RED}
+    assert "Jour Tempo history decoded as Windows-1252" in caplog.text
+
+
+async def test_fetch_tempo_colors_duplicate_days(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A day requested twice is returned once."""
+    aioclient_mock.get(
+        JOUR_TEMPO_HISTORY_URL, content=(FIXTURES / HISTORY_FIXTURE).read_bytes()
+    )
+
+    colors = await async_fetch_tempo_colors(
+        async_get_clientsession(hass), [TODAY, TODAY, YESTERDAY]
+    )
+
+    assert colors == KNOWN_COLORS
+    assert aioclient_mock.call_count == 1
