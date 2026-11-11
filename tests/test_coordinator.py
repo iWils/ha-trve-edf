@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -225,3 +225,18 @@ async def test_clock_survives_a_failing_listener(
     async_fire_time_changed(hass, later)
     await hass.async_block_till_done()
     assert state(hass, entry, "current_period").state == "peak"
+
+
+async def test_download_uses_the_french_day(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """The grid is validated with the day in France, not the UTC day."""
+    freezer.move_to(paris(2026, 11, 11, 0, 30))
+    entry = await add_base_contract(hass)
+
+    with patch(COORDINATOR_FETCH, return_value=BASE_GRID) as fetch:
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert fetch.await_args is not None
+    assert fetch.await_args.kwargs["today"] == date(2026, 11, 11)

@@ -86,6 +86,10 @@ une sans toucher au reste.
   - Tempo : `PART_VARIABLE_{HC|HP}{Bleu|Blanc|Rouge}_*`.
 - Les colonnes sont lues **par leur nom** (ligne d'en-tête), jamais par leur
   position. Seuls les montants **TTC** sont exposés.
+- Une ligne invalide qui peut encore s'appliquer (sans date de fin, ou dont la date
+  de fin n'est pas passée ou est illisible) fait rejeter toute la grille. Une ligne
+  invalide terminée avant le jour du téléchargement ne peut fausser aucun prix : elle
+  est ignorée et signalée dans le journal.
 - La ligne applicable est celle dont la période de validité contient la date du
   jour : `DATE_DEBUT` ≤ aujourd'hui et (`DATE_FIN` vide ou ≥ aujourd'hui). Une grille
   publiée à l'avance s'applique donc toute seule le jour venu.

@@ -22,7 +22,9 @@ Tempo comes with 0.2.0.
   midnight). All prices include taxes.
 - Tariff grids downloaded once a day from the CRE open data on data.gouv.fr, read by
   column name, with the row in force chosen by its validity dates; dates, decimals
-  and encodings are parsed tolerantly and invalid grids are rejected.
+  and encodings are parsed tolerantly. A grid with an invalid row that can still
+  apply is rejected; invalid rows that ended before the download day are skipped
+  and logged.
 - Exact updates at each change of tariff period and at midnight, in French time
   (Europe/Paris) whatever the system time zone, including on daylight saving time
   days; no polling.

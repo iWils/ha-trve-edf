@@ -86,7 +86,9 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
             self._option = TariffOption(user_input[CONF_OPTION])
             try:
                 self._grid = await async_fetch_grid(
-                    async_get_clientsession(self.hass), self._option
+                    async_get_clientsession(self.hass),
+                    self._option,
+                    today=dt_util.now(PARIS).date(),
                 )
             except CreConnectionError:
                 errors["base"] = "cannot_connect"

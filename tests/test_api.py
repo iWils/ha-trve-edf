@@ -8,6 +8,7 @@ from datetime import date
 from decimal import Decimal
 from http import HTTPStatus
 import io
+import logging
 from pathlib import Path
 import re
 from unittest.mock import patch
@@ -135,6 +136,63 @@ REQUIRED_COLUMNS: Mapping[TariffOption, tuple[str, ...]] = {
 }
 """Columns that a grid of each option must have."""
 
+API_LOGGER = "custom_components.trve_edf.api"
+TODAY = date(2026, 11, 11)
+"""Day of the download, for the tests of the invalid past rows."""
+
+INVALID_PAST_LINES = [
+    pytest.param(";31/07/2026;6;188,2;0,194", "DATE_DEBUT is empty", id="no start"),
+    pytest.param(
+        "x/02/2026;31/07/2026;6;188,2;0,194",
+        "DATE_DEBUT is not a date: 'x/02/2026'",
+        id="invalid start",
+    ),
+    pytest.param(
+        "01/02/2026;31/07/2026;;188,2;0,194", "P_SOUSCRITE is empty", id="no power"
+    ),
+    pytest.param(
+        "01/02/2026;31/07/2026;6 kVA;188,2;0,194",
+        "P_SOUSCRITE is not a positive integer: '6 kVA'",
+        id="invalid power",
+    ),
+    pytest.param(
+        "01/02/2026;31/07/2026;6;188,2;",
+        "PART_VARIABLE_TTC is empty",
+        id="some amounts empty",
+    ),
+    pytest.param(
+        "01/02/2026;31/07/2026;6;abc;0,194",
+        "PART_FIXE_TTC is not an amount: 'abc'",
+        id="invalid amount",
+    ),
+    pytest.param(
+        "01/02/2026;31/07/2026;6;-188,2;0,194",
+        "PART_FIXE_TTC is negative: '-188,2'",
+        id="negative amount",
+    ),
+    pytest.param(
+        "01/08/2026;31/07/2026;6;188,2;0,194",
+        "DATE_FIN 2026-07-31 is before DATE_DEBUT 2026-08-01",
+        id="end before start",
+    ),
+    pytest.param(
+        "01/02/2026;31/07/2026;6;188,2;0,194;x",
+        "the row has more fields than the header",
+        id="more fields",
+    ),
+    pytest.param(
+        "01/02/2026;31/07/2026;6;188,2",
+        "the row has fewer fields than the header",
+        id="fewer fields",
+    ),
+    pytest.param(
+        "01/02/2026;2026-11-10;6;abc;0,194",
+        "PART_FIXE_TTC is not an amount: 'abc'",
+        id="ended the day before",
+    ),
+]
+"""Invalid rows of a Base grid that ended before TODAY, with the reason."""
+
 
 def read_fixture(name: str) -> str:
     """Return the content of a fixture file."""
@@ -144,6 +202,15 @@ def read_fixture(name: str) -> str:
 def fixture_columns(name: str) -> list[str]:
     """Return the columns of a fixture file, in file order."""
     return read_fixture(name).splitlines()[0].split(";")
+
+
+def warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the warnings logged by the client."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == API_LOGGER and record.levelno == logging.WARNING
+    ]
 
 
 def csv_text(*lines: str) -> str:
@@ -766,6 +833,175 @@ def test_invalid_csv() -> None:
     assert isinstance(error.value.__cause__, csv.Error)
 
 
+# Invalid rows that ended before the day of the download.
+
+
+@pytest.mark.parametrize(("line", "reason"), INVALID_PAST_LINES)
+def test_invalid_past_row_is_skipped(
+    caplog: pytest.LogCaptureFixture, line: str, reason: str
+) -> None:
+    """An invalid row that ended before today cannot affect a price: it is skipped."""
+    text = csv_text(BASE_HEADER, BASE_LINE, line)
+
+    grid = parse_grid(TariffOption.BASE, text, today=TODAY)
+
+    assert grid.rows == (BASE_ROW,)
+    assert warnings(caplog) == [
+        "Skipped 1 invalid row(s) of the CRE tariff grid (base) that ended before "
+        f"2026-11-11; first at line 3: {reason}"
+    ]
+
+
+@pytest.mark.parametrize(("line", "reason"), INVALID_PAST_LINES)
+def test_invalid_past_row_without_today(line: str, reason: str) -> None:
+    """Without the current day, an invalid past row still rejects the grid."""
+    text = csv_text(BASE_HEADER, BASE_LINE, line)
+
+    with pytest.raises(
+        CreDataError,
+        match=rf"^Line 3 of the CRE tariff grid \(base\): {re.escape(reason)}$",
+    ):
+        parse_grid(TariffOption.BASE, text)
+
+
+def test_skipped_rows_are_logged_once(caplog: pytest.LogCaptureFixture) -> None:
+    """One warning gives the number of skipped rows and the first of them."""
+    text = csv_text(
+        BASE_HEADER,
+        "01/02/2025;31/07/2025;6;188,2;",
+        BASE_LINE,
+        ";31/07/2026;6;188,2;0,194",
+        "01/02/2026;31/07/2026;6;abc;0,194",
+    )
+
+    grid = parse_grid(TariffOption.BASE, text, today=TODAY)
+
+    assert grid.rows == (BASE_ROW,)
+    assert warnings(caplog) == [
+        "Skipped 3 invalid row(s) of the CRE tariff grid (base) that ended before "
+        "2026-11-11; first at line 2: PART_VARIABLE_TTC is empty"
+    ]
+
+
+@pytest.mark.parametrize("option", list(TariffOption))
+def test_valid_past_rows_are_kept(
+    caplog: pytest.LogCaptureFixture, option: TariffOption
+) -> None:
+    """Only the invalid past rows are skipped; nothing is logged otherwise."""
+    name, expected = GRIDS[option]
+
+    assert parse_grid(option, read_fixture(name), today=TODAY) == expected
+    assert warnings(caplog) == []
+
+
+@pytest.mark.parametrize(
+    ("header", "line", "message"),
+    [
+        pytest.param(
+            BASE_HEADER,
+            "01/02/2026;11/11/2026;6;abc;0,194",
+            "PART_FIXE_TTC is not an amount: 'abc'",
+            id="ends today",
+        ),
+        pytest.param(
+            BASE_HEADER,
+            "01/02/2026;31/12/2026;6;188,2;",
+            "PART_VARIABLE_TTC is empty",
+            id="ends later",
+        ),
+        pytest.param(
+            BASE_HEADER,
+            "01/02/2026;;6;-188,2;0,194",
+            "PART_FIXE_TTC is negative: '-188,2'",
+            id="in force",
+        ),
+        pytest.param(
+            BASE_HEADER,
+            "01/02/2026;soon;6;188,2;0,194",
+            "DATE_FIN is not a date: 'soon'",
+            id="unreadable end",
+        ),
+        pytest.param(
+            BASE_HEADER,
+            "01/02/2026;31/02/2026;6;188,2;0,194",
+            "DATE_FIN is not a valid date: '31/02/2026'",
+            id="impossible end",
+        ),
+        pytest.param(
+            "DATE_DEBUT;P_SOUSCRITE;PART_FIXE_TTC;PART_VARIABLE_TTC;DATE_FIN",
+            "01/02/2026;6;188,2;0,194",
+            "the row has fewer fields than the header",
+            id="no end cell",
+        ),
+    ],
+)
+def test_invalid_row_that_may_apply_rejects_the_grid(
+    caplog: pytest.LogCaptureFixture, header: str, line: str, message: str
+) -> None:
+    """An invalid row that does not provably end before today is still an error."""
+    text = csv_text(header, line)
+
+    with pytest.raises(
+        CreDataError,
+        match=rf"^Line 2 of the CRE tariff grid \(base\): {re.escape(message)}",
+    ):
+        parse_grid(TariffOption.BASE, text, today=TODAY)
+
+    assert warnings(caplog) == []
+
+
+def test_all_rows_skipped_is_no_usable_row(caplog: pytest.LogCaptureFixture) -> None:
+    """A grid whose rows are all skipped has no usable row."""
+    text = csv_text(
+        BASE_HEADER, ";31/07/2026;6;188,2;0,194", "01/08/2010;31/07/2011;36;;"
+    )
+
+    with pytest.raises(
+        CreDataError, match=r"^The CRE tariff grid \(base\) has no usable row$"
+    ):
+        parse_grid(TariffOption.BASE, text, today=TODAY)
+
+    assert len(warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize(
+    ("option", "text", "message"),
+    [
+        pytest.param(TariffOption.BASE, "", "is empty", id="empty"),
+        pytest.param(
+            TariffOption.BASE,
+            read_fixture(HPHC_FIXTURE),
+            "lacks the required columns: PART_VARIABLE_TTC",
+            id="another option",
+        ),
+        pytest.param(
+            TariffOption.HPHC,
+            "<!DOCTYPE html>\n<html></html>\n",
+            "lacks the required columns",
+            id="HTML page",
+        ),
+        pytest.param(
+            TariffOption.BASE,
+            csv_text(f"{BASE_HEADER};PART_FIXE_TTC", f"{BASE_LINE};190,81"),
+            "has duplicate columns: PART_FIXE_TTC",
+            id="duplicate column",
+        ),
+        pytest.param(
+            TariffOption.BASE,
+            csv_text(BASE_HEADER, f'01/02/2026;31/07/2026;6;188,2;"{"0" * 200_000}"'),
+            "is not valid CSV",
+            id="invalid CSV",
+        ),
+    ],
+)
+def test_grid_errors_do_not_depend_on_today(
+    option: TariffOption, text: str, message: str
+) -> None:
+    """Errors about the whole file are raised whatever the current day."""
+    with pytest.raises(CreDataError, match=re.escape(message)):
+        parse_grid(option, text, today=TODAY)
+
+
 # Download of the grids.
 
 
@@ -803,6 +1039,21 @@ async def test_fetch_grid_request_options(
     get.assert_called_once_with(
         session, url, timeout=REQUEST_TIMEOUT, allow_redirects=True
     )
+
+
+async def test_fetch_grid_skips_invalid_past_rows(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """The current day is passed on to the parsing of the grid."""
+    content = csv_text(BASE_HEADER, "01/02/2026;31/07/2026;6;abc;0,194", BASE_LINE)
+    aioclient_mock.get(CRE_GRID_URLS[TariffOption.BASE], content=content.encode())
+    session = async_get_clientsession(hass)
+
+    with pytest.raises(CreDataError, match="PART_FIXE_TTC is not an amount"):
+        await async_fetch_grid(session, TariffOption.BASE)
+    grid = await async_fetch_grid(session, TariffOption.BASE, today=TODAY)
+
+    assert grid.rows == (BASE_ROW,)
 
 
 @pytest.mark.parametrize(

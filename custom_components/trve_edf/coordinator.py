@@ -93,7 +93,9 @@ class TrveEdfCoordinator(DataUpdateCoordinator[TariffGrid]):
 
         try:
             grid = await async_fetch_grid(
-                async_get_clientsession(self.hass), self.option
+                async_get_clientsession(self.hass),
+                self.option,
+                today=now.astimezone(PARIS).date(),
             )
         except TrveEdfError as err:
             if (

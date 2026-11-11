@@ -6,8 +6,10 @@ integration) and has no Home Assistant dependency.
 
 The CRE publishes one CSV file per tariff option on data.gouv.fr, with ``;`` as
 separator and a header line. The columns are read by their name, and only the
-amounts with taxes included (TTC) are kept. A grid is either fully valid or
-rejected: an invalid response is never kept.
+amounts with taxes included (TTC) are kept. An invalid response is never kept:
+an invalid row that may still apply rejects the whole grid. An invalid row that
+ended before the current day cannot affect any price: when the caller gives the
+current day, such a row is skipped and logged instead.
 """
 
 from __future__ import annotations
@@ -84,7 +86,10 @@ class CreDataError(TrveEdfError):
 
 
 async def async_fetch_grid(
-    session: aiohttp.ClientSession, option: TariffOption
+    session: aiohttp.ClientSession,
+    option: TariffOption,
+    *,
+    today: date | None = None,
 ) -> TariffGrid:
     """Download and parse the CRE tariff grid of an option.
 
@@ -94,6 +99,8 @@ async def async_fetch_grid(
     Args:
         session: HTTP session used for the request.
         option: Tariff option of the grid.
+        today: Current day in France, to skip the invalid past rows; see
+            parse_grid.
 
     Returns:
         The grid of the option, with its rows in file order.
@@ -117,12 +124,14 @@ async def async_fetch_grid(
         raise CreConnectionError(
             f"The CRE tariff grid ({option}) could not be downloaded: {reason}"
         ) from err
-    grid = parse_grid(option, _decode(option, body))
+    grid = parse_grid(option, _decode(option, body), today=today)
     _LOGGER.debug("CRE tariff grid (%s) downloaded: %d rows", option, len(grid.rows))
     return grid
 
 
-def parse_grid(option: TariffOption, text: str) -> TariffGrid:
+def parse_grid(
+    option: TariffOption, text: str, *, today: date | None = None
+) -> TariffGrid:
     """Parse the CSV tariff grid of an option, as published by the CRE.
 
     Columns are read by their header name, extra columns are ignored. Dates may
@@ -132,25 +141,27 @@ def parse_grid(option: TariffOption, text: str) -> TariffGrid:
     Args:
         option: Tariff option of the grid.
         text: Content of the CSV file.
+        today: Current day in France. When given, an invalid row whose end date
+            is before this day is skipped, with a warning for the whole grid,
+            instead of rejecting the grid: it cannot affect any price. When
+            None, every row must be valid.
 
     Returns:
         The grid of the option, with its rows in file order.
 
     Raises:
-        CreDataError: The grid is invalid: a required column is missing, a cell
-            cannot be parsed, a row is inconsistent or no row is usable.
+        CreDataError: The grid is invalid: a required column is missing, a row
+            that may still apply cannot be parsed or is inconsistent, or no row
+            is usable.
     """
     reader = csv.DictReader(
         io.StringIO(text.removeprefix(_BOM), newline=""),
         delimiter=";",
         skipinitialspace=True,
     )
-    rows: list[TariffRow] = []
     try:
         _read_header(option, reader)
-        for record in reader:
-            if (row := _parse_record(option, record, reader.line_num)) is not None:
-                rows.append(row)
+        rows = _read_rows(option, reader, today)
     except csv.Error as err:
         # The dict reader counts the lines read successfully: the underlying
         # reader counts the line being read.
@@ -208,26 +219,85 @@ def _read_header(option: TariffOption, reader: csv.DictReader[str]) -> None:
         )
 
 
-def _parse_record(
-    option: TariffOption, record: Mapping[str | None, str | list[str] | None], line: int
-) -> TariffRow | None:
+type _Record = Mapping[str | None, str | list[str] | None]
+"""Record of the CSV reader: cells by column name.
+
+Cells beyond the header are listed under None; columns beyond the row are None.
+"""
+
+
+def _read_rows(
+    option: TariffOption, reader: csv.DictReader[str], today: date | None
+) -> list[TariffRow]:
+    """Read the rows that follow the header.
+
+    Args:
+        option: Tariff option of the grid.
+        reader: CSV reader, after the header.
+        today: Current day, to skip the invalid rows that ended before it; None
+            to reject every invalid row.
+
+    Returns:
+        The usable rows, in file order.
+
+    Raises:
+        CreDataError: A row that may still apply is invalid.
+    """
+    rows: list[TariffRow] = []
+    skipped: list[tuple[int, str]] = []
+    for record in reader:
+        try:
+            row = _parse_record(option, record)
+        except ValueError as err:
+            if today is None or not _ended_before(record, today):
+                raise CreDataError(
+                    f"Line {reader.line_num} of the CRE tariff grid ({option}): {err}"
+                ) from err
+            skipped.append((reader.line_num, str(err)))
+            continue
+        if row is not None:
+            rows.append(row)
+    if skipped:
+        line, reason = skipped[0]
+        _LOGGER.warning(
+            "Skipped %d invalid row(s) of the CRE tariff grid (%s) that ended "
+            "before %s; first at line %d: %s",
+            len(skipped),
+            option,
+            today,
+            line,
+            reason,
+        )
+    return rows
+
+
+def _ended_before(record: _Record, today: date) -> bool:
+    """Tell whether a record has a valid end date before the given day."""
+    end = record.get(_END)
+    if not isinstance(end, str):
+        return False  # The row stops before its end date.
+    try:
+        return _parse_date(_END, end.strip()) < today
+    except ValueError:
+        return False  # No end date or an unreadable one: the row may apply.
+
+
+def _parse_record(option: TariffOption, record: _Record) -> TariffRow | None:
     """Parse a record of the CSV reader.
 
     Args:
         option: Tariff option of the grid.
-        record: Cells of the row by column name. Cells beyond the header are
-            listed under None; columns beyond the row are None.
-        line: Line number of the row, for the error messages.
+        record: Cells of the row by column name.
 
     Returns:
         The row, or None when the line is blank or has no amount at all.
 
     Raises:
-        CreDataError: The row is invalid.
+        ValueError: The row is invalid.
     """
     extra = record.get(None)
     if isinstance(extra, list) and any(field.strip() for field in extra):
-        raise _row_error(option, line, "the row has more fields than the header")
+        raise ValueError("the row has more fields than the header")
     cells = {
         name: value.strip() if isinstance(value, str) else None
         for name, value in record.items()
@@ -238,16 +308,8 @@ def _parse_record(
         return None
     required = _required_columns(option)
     if any(cells[column] is None for column in required):
-        raise _row_error(option, line, "the row has fewer fields than the header")
-    try:
-        return _build_row(option, {column: cells[column] or "" for column in required})
-    except ValueError as err:
-        raise _row_error(option, line, str(err)) from err
-
-
-def _row_error(option: TariffOption, line: int, detail: str) -> CreDataError:
-    """Return the error about an invalid row of a CRE tariff grid."""
-    return CreDataError(f"Line {line} of the CRE tariff grid ({option}): {detail}")
+        raise ValueError("the row has fewer fields than the header")
+    return _build_row(option, {column: cells[column] or "" for column in required})
 
 
 def _build_row(option: TariffOption, values: Mapping[str, str]) -> TariffRow:
