@@ -9,10 +9,8 @@ from homeassistant.config_entries import SOURCE_USER, ConfigFlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.trve_edf.api import CreConnectionError, CreDataError
-from custom_components.trve_edf.config_flow import TrveEdfConfigFlow
 from custom_components.trve_edf.const import (
     CONF_OFF_PEAK_HOURS,
     CONF_OPTION,
@@ -196,10 +194,34 @@ async def test_options_flow_changes_off_peak_hours(hass: HomeAssistant) -> None:
     assert entry.options == {CONF_OFF_PEAK_HOURS: "01:30-07:30,12:30-14:30"}
 
 
-async def test_only_hphc_contracts_have_options(hass: HomeAssistant) -> None:
-    """Base contracts have nothing to change in the options."""
-    base = MockConfigEntry(domain=DOMAIN, data={CONF_OPTION: "base", CONF_POWER: 6})
-    hphc = MockConfigEntry(domain=DOMAIN, data={CONF_OPTION: "hphc", CONF_POWER: 6})
+@pytest.mark.parametrize("option", [TariffOption.BASE, TariffOption.TEMPO])
+async def test_base_and_tempo_contracts_have_no_options(
+    hass: HomeAssistant, option: TariffOption
+) -> None:
+    """The options flow tells Base and Tempo contracts to use Reconfigure."""
+    entry = await setup_contract(hass, option)
 
-    assert not TrveEdfConfigFlow.async_supports_options_flow(base)
-    assert TrveEdfConfigFlow.async_supports_options_flow(hphc)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_options"
+
+
+async def test_options_submitted_after_a_change_of_option(hass: HomeAssistant) -> None:
+    """Off-peak hours are not written once the contract is not HP/HC anymore."""
+    entry = await setup_contract(hass, TariffOption.HPHC, off_peak="22:00-06:00")
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+
+    with patch(COORDINATOR_FETCH, return_value=BASE_GRID):
+        hass.config_entries.async_update_entry(
+            entry, data={CONF_OPTION: "base", CONF_POWER: 6}, options={}
+        )
+        await hass.async_block_till_done()
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_OFF_PEAK_HOURS: "01:00-07:00"}
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_options"
+    assert entry.options == {}

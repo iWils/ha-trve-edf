@@ -58,6 +58,9 @@
       "off_peak_format": "Chaque plage s'écrit HH:MM-HH:MM, les plages séparées par des virgules, par exemple 01:30-07:30,12:30-14:30.",
       "off_peak_same_start_end": "Une plage ne peut pas commencer et finir à la même heure.",
       "off_peak_overlap": "Les plages se chevauchent : chaque minute de la journée ne peut appartenir qu'à une seule plage."
+    },
+    "abort": {
+      "no_options": "Les contrats Base et Tempo n'ont pas d'options : pour changer d'option ou de puissance, utilisez « Reconfigurer »."
     }
   },
   "selector": {

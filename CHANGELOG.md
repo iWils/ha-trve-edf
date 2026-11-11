@@ -14,17 +14,22 @@ Quality.
 ### Added
 - Reconfiguration: change the option, the subscribed power or the off-peak hours of
   a contract without removing it (⋮ menu → Reconfigure); the current values are
-  suggested and the sensors of a former option are removed.
-- Repair issue when the subscribed power has no tariff in force in the CRE grid,
-  cleared when it comes back or when the contract is removed.
+  suggested, a title chosen by the user is kept and the sensors of a former option
+  are removed.
+- Repair issue when the subscribed power is not offered anymore in the CRE grid,
+  cleared when it comes back, when the contract is unloaded or removed.
 - Diagnostics of a contract: grid in use, tariff in force, computed period and
-  price, next price change and known Tempo colors, without personal data.
+  price, next price change and known Tempo colors; the title is redacted and
+  nothing personal is included.
 - Icons for every sensor.
 - The tests also run on Home Assistant 2025.1, the minimum version.
 
 ### Changed
 - Invalid off-peak hours show a precise message: no range, bad format, same start
   and end, or overlapping ranges.
+- Every contract offers the options flow: Base and Tempo contracts explain that they
+  have no options and are changed by a reconfiguration (Home Assistant does not
+  re-evaluate the options of an entry when a reconfiguration changes its option).
 
 ## [0.2.0] - 2026-11-11
 

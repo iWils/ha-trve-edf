@@ -9,8 +9,10 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import SOURCE_RECONFIGURE, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import issue_registry as ir
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+import voluptuous as vol
 
 from custom_components.trve_edf.api import CreConnectionError
 from custom_components.trve_edf.const import (
@@ -19,9 +21,10 @@ from custom_components.trve_edf.const import (
     CONF_POWER,
     DOMAIN,
 )
-from custom_components.trve_edf.models import TariffOption
+from custom_components.trve_edf.models import TariffGrid, TariffOption
 
 from .common import (
+    BASE_GRID,
     CONFIG_FLOW_FETCH,
     COORDINATOR_FETCH,
     HPHC_GRID,
@@ -86,7 +89,8 @@ async def test_from_hphc_to_tempo(hass: HomeAssistant) -> None:
     assert result["reason"] == "reconfigure_successful"
     assert entry.data == {CONF_OPTION: "tempo", CONF_POWER: 9}
     assert entry.options == {}
-    assert entry.title == "Tarifs réglementés EDF \u2013 Tempo 9 kVA"
+    # The title chosen when the contract was added is kept.
+    assert entry.title == "Contract hphc 6 kVA"
     assert entry.state is ConfigEntryState.LOADED
     assert entity_id(hass, entry, "peak_price") is None
     assert state(hass, entry, "red_peak_price").state == "0.7295"
@@ -161,3 +165,88 @@ async def test_a_contract_waiting_for_its_setup_is_reloaded(
     assert reloaded is not None
     assert reloaded.data[CONF_POWER] == 9
     assert reloaded.state is ConfigEntryState.LOADED
+
+
+async def test_a_generated_title_follows_the_contract(hass: HomeAssistant) -> None:
+    """A generated title is updated; the off-peak hours are asked for HP/HC."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tarifs réglementés EDF \u2013 Base 6 kVA",
+        data={CONF_OPTION: "base", CONF_POWER: 6},
+    )
+    entry.add_to_hass(hass)
+    with patch(COORDINATOR_FETCH, return_value=BASE_GRID):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    result = await start(hass, entry)
+    with patch(CONFIG_FLOW_FETCH, return_value=HPHC_GRID):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_OPTION: "hphc"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_POWER: "9"}
+        )
+    assert result["step_id"] == "off_peak"
+    schema = result["data_schema"]
+    assert schema is not None
+    off_peak_field = next(
+        field for field in schema.schema if field == CONF_OFF_PEAK_HOURS
+    )
+    assert off_peak_field.default is vol.UNDEFINED
+
+    with patch(COORDINATOR_FETCH, return_value=HPHC_GRID):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_OFF_PEAK_HOURS: "22:00-06:00"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.title == "Tarifs réglementés EDF \u2013 HP/HC 9 kVA"
+    assert entry.options == {CONF_OFF_PEAK_HOURS: "22:00-06:00"}
+    assert entity_id(hass, entry, "base_price") is None
+
+
+async def test_reconfiguring_the_power_clears_the_repair_issue(
+    hass: HomeAssistant,
+) -> None:
+    """Choosing a power with a tariff in force clears its repair issue."""
+    entry = await setup_contract(hass, TariffOption.BASE, power=36)
+    issue_id = f"power_not_available_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    result = await start(hass, entry)
+    with patch(CONFIG_FLOW_FETCH, return_value=BASE_GRID):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_OPTION: "base"}
+        )
+    assert suggested(result, CONF_POWER) is None
+    with patch(COORDINATOR_FETCH, return_value=BASE_GRID):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_POWER: "6"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["reason"] == "reconfigure_successful"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_reconfigure_errors(hass: HomeAssistant) -> None:
+    """A failed download can be retried; a grid without power aborts."""
+    entry = await setup_contract(hass, TariffOption.BASE)
+    result = await start(hass, entry)
+
+    with patch(CONFIG_FLOW_FETCH, side_effect=CreConnectionError("offline")):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_OPTION: "base"}
+        )
+    assert result["step_id"] == "reconfigure"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+    expired = TariffGrid(option=TariffOption.BASE, rows=BASE_GRID.rows[:1])
+    with patch(CONFIG_FLOW_FETCH, return_value=expired):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_OPTION: "base"}
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_power_available"

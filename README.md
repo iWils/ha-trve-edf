@@ -57,7 +57,7 @@ Plusieurs contrats peuvent être ajoutés, par exemple pour plusieurs logements.
 Pour changer d'option ou de puissance, inutile de supprimer l'intégration : dans
 Paramètres → Appareils et services → Tarifs réglementés EDF (TRVE), ouvrez le menu
 ⋮ du contrat et choisissez « Reconfigurer ». Les capteurs de l'ancienne option sont
-alors retirés.
+alors retirés, et le nom que vous avez donné au contrat est conservé.
 
 ## Entités
 
@@ -96,8 +96,8 @@ contrats Tempo.
   contrat.
 - Les diagnostics du contrat (menu ⋮ → « Télécharger les diagnostics ») montrent la
   grille utilisée, le tarif en vigueur, la période et le prix calculés, et les
-  couleurs Tempo connues. Ils ne contiennent aucune donnée personnelle : joignez-les
-  à une issue GitHub pour signaler un prix faux.
+  couleurs Tempo connues. Ils ne contiennent aucune donnée personnelle (le nom du
+  contrat y est masqué) : joignez-les à une issue GitHub pour signaler un prix faux.
 
 ## Développement
 

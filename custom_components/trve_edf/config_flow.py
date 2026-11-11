@@ -50,6 +50,11 @@ OPTION_TITLES = {
 OFF_PEAK_EXAMPLE = "22:00-06:00"
 
 
+def _title(option: TariffOption, power: int) -> str:
+    """Return the title generated for a contract."""
+    return f"{TITLE_PREFIX}{TITLE_SEPARATOR}{OPTION_TITLES[option]} {power} kVA"
+
+
 def _off_peak_schema(default: str | None) -> vol.Schema:
     key = (
         vol.Required(CONF_OFF_PEAK_HOURS)
@@ -201,13 +206,16 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def _async_create_contract(self, options: dict[str, Any]) -> ConfigFlowResult:
         """Add the contract, or update the reconfigured one."""
-        title = (
-            f"{TITLE_PREFIX}{TITLE_SEPARATOR}"
-            f"{OPTION_TITLES[self._option]} {self._power} kVA"
-        )
+        title = _title(self._option, self._power)
         data = {CONF_OPTION: self._option.value, CONF_POWER: self._power}
         if (entry := self._reconfigured) is None:
             return self.async_create_entry(title=title, data=data, options=options)
+
+        # Only a generated title follows the contract: a title chosen by the user
+        # is kept.
+        former = _title(TariffOption(entry.data[CONF_OPTION]), entry.data[CONF_POWER])
+        if entry.title != former:
+            title = entry.title
 
         # A loaded entry is reloaded by its update listener when it changes.
         self.hass.config_entries.async_update_entry(
@@ -220,14 +228,13 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        """Return the options flow of a contract."""
-        return TrveEdfOptionsFlow()
+        """Return the options flow of a contract.
 
-    @classmethod
-    @callback
-    def async_supports_options_flow(cls, config_entry: ConfigEntry) -> bool:
-        """Only HP/HC contracts have options: their off-peak hours."""
-        return bool(config_entry.data[CONF_OPTION] == TariffOption.HPHC)
+        Every contract offers it, because Home Assistant does not re-evaluate
+        whether an entry has options after a reconfiguration changes its option:
+        the flow itself tells Base and Tempo contracts that they have none.
+        """
+        return TrveEdfOptionsFlow()
 
 
 class TrveEdfOptionsFlow(OptionsFlow):
@@ -236,7 +243,14 @@ class TrveEdfOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Edit the off-peak hours."""
+        """Edit the off-peak hours of an HP/HC contract.
+
+        Base and Tempo contracts have no options (Tempo off-peak hours are fixed):
+        they are changed by a reconfiguration. The option is checked again when
+        the form is submitted, in case a reconfiguration changed it meanwhile.
+        """
+        if self.config_entry.data[CONF_OPTION] != TariffOption.HPHC:
+            return self.async_abort(reason="no_options")
         errors: dict[str, str] = {}
         if user_input is not None:
             off_peak, errors = _validate_off_peak(user_input)
@@ -244,7 +258,7 @@ class TrveEdfOptionsFlow(OptionsFlow):
                 return self.async_create_entry(data={CONF_OFF_PEAK_HOURS: off_peak})
             default = user_input[CONF_OFF_PEAK_HOURS]
         else:
-            default = self.config_entry.options[CONF_OFF_PEAK_HOURS]
+            default = self.config_entry.options.get(CONF_OFF_PEAK_HOURS)
 
         return self.async_show_form(
             step_id="init",

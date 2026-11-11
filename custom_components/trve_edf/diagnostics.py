@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from homeassistant.components.diagnostics import REDACTED
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
@@ -26,17 +28,23 @@ async def async_get_config_entry_diagnostics(
     """Return the diagnostics of a contract, as JSON-compatible data.
 
     Amounts are exact decimal strings. Instants are ISO 8601 texts with their
-    offset; the next price change is given in Paris time, like the rules.
+    offset; the next price change is given in Paris time, like the rules. The
+    title, which the user may have chosen, is redacted. A contract that is not
+    loaded only has its entry part.
     """
+    entry_data = {
+        "title": REDACTED,
+        "version": entry.version,
+        "state": entry.state.value,
+        "data": dict(entry.data),
+        "options": dict(entry.options),
+    }
+    if entry.state is not ConfigEntryState.LOADED:
+        return {"entry": entry_data}
     coordinator = entry.runtime_data
     now = dt_util.utcnow()
     return {
-        "entry": {
-            "title": entry.title,
-            "version": entry.version,
-            "data": dict(entry.data),
-            "options": dict(entry.options),
-        },
+        "entry": entry_data,
         "contract": {
             "option": coordinator.option.value,
             "power_kva": coordinator.power_kva,

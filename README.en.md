@@ -56,7 +56,7 @@ Several contracts can be added, for example for several homes.
 To change the option or the power, there is no need to remove the integration: in
 Settings → Devices & services → Tarifs réglementés EDF (TRVE), open the ⋮ menu of
 the contract and choose "Reconfigure". The sensors of the former option are then
-removed.
+removed, and the name you gave to the contract is kept.
 
 ## Entities
 
@@ -92,8 +92,8 @@ and shared by all the Tempo contracts.
   notification appears in Settings → Repairs: reconfigure the contract.
 - The diagnostics of the contract (⋮ menu → "Download diagnostics") show the grid in
   use, the tariff in force, the computed period and price, and the known Tempo
-  colors. They hold no personal data: attach them to a GitHub issue to report a
-  wrong price.
+  colors. They hold no personal data (the name of the contract is redacted): attach
+  them to a GitHub issue to report a wrong price.
 
 ## Development
 

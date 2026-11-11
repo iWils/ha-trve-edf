@@ -39,6 +39,7 @@ from .models import (
 )
 from .pricing import (
     PARIS,
+    available_powers,
     current_period,
     current_price,
     next_midnight,
@@ -92,6 +93,7 @@ class TrveEdfCoordinator(DataUpdateCoordinator[TariffGrid]):
             hass, STORAGE_VERSION, f"{DOMAIN}.grid_{self.option}"
         )
         self._unsub_clock: CALLBACK_TYPE | None = None
+        self._ambiguous_logged = False
 
     async def _async_update_data(self) -> TariffGrid:
         """Get the tariff grid of the contract option."""
@@ -162,8 +164,19 @@ class TrveEdfCoordinator(DataUpdateCoordinator[TariffGrid]):
         """
         if not self.grid_is_trusted(now):
             return
-        if row_in_force(self.data, now.astimezone(PARIS).date(), self.power_kva):
+        day = now.astimezone(PARIS).date()
+        if self.power_kva in available_powers(self.data, day):
             ir.async_delete_issue(self.hass, DOMAIN, self.power_issue_id)
+            ambiguous = row_in_force(self.data, day, self.power_kva) is None
+            if ambiguous and not self._ambiguous_logged:
+                _LOGGER.warning(
+                    "The %s tariff grid has conflicting rows for %s kVA on %s:"
+                    " prices are unavailable",
+                    self.option,
+                    self.power_kva,
+                    day.isoformat(),
+                )
+            self._ambiguous_logged = ambiguous
             return
         ir.async_create_issue(
             self.hass,

@@ -93,8 +93,9 @@ async def test_base_contract_before_a_new_row(
 
     assert await get_diagnostics(entry) == {
         "entry": {
-            "title": "Contract base 6 kVA",
+            "title": "**REDACTED**",
             "version": 1,
+            "state": "loaded",
             "data": {"option": "base", "power_kva": 6},
             "options": {},
         },
@@ -286,3 +287,27 @@ async def test_power_without_row(
     assert diagnostics["now"]["price_key"] == "base"
     assert diagnostics["now"]["price"] is None
     assert diagnostics["now"]["next_price_change"] is None
+
+
+async def test_diagnostics_of_a_contract_not_loaded(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A contract waiting for its setup only shows its entry."""
+    freezer.move_to(paris(2026, 11, 11, 12, 0))
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Maison", data={"option": "base", "power_kva": 6}
+    )
+    entry.add_to_hass(hass)
+    with patch(COORDINATOR_FETCH, side_effect=CreConnectionError("offline")):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert await async_get_config_entry_diagnostics(hass, entry) == {
+        "entry": {
+            "title": "**REDACTED**",
+            "version": 1,
+            "state": "setup_retry",
+            "data": {"option": "base", "power_kva": 6},
+            "options": {},
+        }
+    }
