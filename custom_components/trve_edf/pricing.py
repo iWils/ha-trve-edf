@@ -153,12 +153,20 @@ def row_in_force(grid: TariffGrid, day: date, power_kva: int) -> TariffRow | Non
     Returns:
         The row of that power whose validity contains the day, its last day
         included; the one that starts last if several rows match. None if no
-        row matches.
+        row matches, or if several rows start on that same latest day with
+        different amounts: the price cannot be known for sure.
     """
     rows = [
         row for row in grid.rows if row.power_kva == power_kva and _in_force(row, day)
     ]
-    return max(rows, key=lambda row: row.start, default=None)
+    if not rows:
+        return None
+    latest_start = max(row.start for row in rows)
+    latest = [row for row in rows if row.start == latest_start]
+    amounts = {(row.subscription, tuple(sorted(row.prices.items()))) for row in latest}
+    if len(amounts) > 1:
+        return None
+    return latest[0]
 
 
 def available_powers(grid: TariffGrid, day: date) -> tuple[int, ...]:

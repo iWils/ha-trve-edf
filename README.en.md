@@ -60,14 +60,15 @@ Several contracts can be added, for example for several homes.
 | Yearly subscription | all | Yearly amount including taxes, in EUR |
 | Base price | Base | Price of the kWh, in EUR/kWh including taxes |
 | Peak hours price, off-peak hours price | HP/HC | Price of the kWh of each period |
-| Next price change | HP/HC | Date and time of the next peak/off-peak switch |
+| Next price change | HP/HC | Date and time of the next change: peak/off-peak switch, or new tariff grid at midnight |
 
 For the Energy dashboard, choose "Use an entity with current price" and select the
 "Current price" sensor.
 
-Prices are recomputed at the exact moment of each period change, in French time. If
-the tariff grid cannot be downloaded anymore, the last known prices are used for 7
-days at most, then become unavailable rather than showing a possibly wrong value.
+Prices are recomputed at the exact moment of each period change, in French time. The
+tariff grid is downloaded once a day and saved. If it cannot be downloaded anymore,
+the last known grid is still used, even after a restart, for 7 days at most after its
+download: prices then become unavailable rather than showing a possibly wrong value.
 
 ## Development
 

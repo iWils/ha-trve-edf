@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, time
 from decimal import Decimal
 from enum import StrEnum
-from typing import Final
+from typing import Any, Final
 
 
 class TariffOption(StrEnum):
@@ -62,6 +62,53 @@ class TariffGrid:
 
     option: TariffOption
     rows: tuple[TariffRow, ...]
+
+
+def grid_to_dict(grid: TariffGrid) -> dict[str, Any]:
+    """Convert a tariff grid to JSON-compatible data (amounts kept exact)."""
+    return {
+        "option": grid.option.value,
+        "rows": [
+            {
+                "start": row.start.isoformat(),
+                "end": None if row.end is None else row.end.isoformat(),
+                "power_kva": row.power_kva,
+                "subscription": str(row.subscription),
+                "prices": {
+                    period.value: str(price) for period, price in row.prices.items()
+                },
+            }
+            for row in grid.rows
+        ],
+    }
+
+
+def grid_from_dict(data: Any) -> TariffGrid | None:
+    """Rebuild a tariff grid from data made by ``grid_to_dict``.
+
+    Returns:
+        The grid, or None if the data is not a valid grid.
+    """
+    try:
+        option = TariffOption(data["option"])
+        rows = tuple(
+            TariffRow(
+                start=date.fromisoformat(row["start"]),
+                end=None if row["end"] is None else date.fromisoformat(row["end"]),
+                power_kva=int(row["power_kva"]),
+                subscription=Decimal(row["subscription"]),
+                prices={
+                    TariffPeriod(period): Decimal(price)
+                    for period, price in row["prices"].items()
+                },
+            )
+            for row in data["rows"]
+        )
+    except (ArithmeticError, AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if not rows or any(set(row.prices) != set(OPTION_PERIODS[option]) for row in rows):
+        return None
+    return TariffGrid(option=option, rows=rows)
 
 
 @dataclass(frozen=True, slots=True)

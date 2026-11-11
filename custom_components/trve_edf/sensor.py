@@ -95,7 +95,7 @@ SENSORS: tuple[TrveEdfSensorDescription, ...] = (
         translation_key="next_price_change",
         device_class=SensorDeviceClass.TIMESTAMP,
         options_supported=frozenset({TariffOption.HPHC}),
-        value_fn=lambda coordinator, now: coordinator.next_change(now),
+        value_fn=lambda coordinator, now: coordinator.next_price_change(now),
     ),
     TrveEdfSensorDescription(
         key="subscription",

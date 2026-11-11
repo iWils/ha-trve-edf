@@ -24,11 +24,11 @@
       }
     },
     "error": {
-      "invalid_off_peak_hours": "Invalid off-peak hours: use HH:MM-HH:MM ranges separated by commas, without overlap."
+      "invalid_off_peak_hours": "Invalid off-peak hours: use HH:MM-HH:MM ranges separated by commas, without overlap.",
+      "cannot_connect": "Cannot download the regulated tariffs grid. Try again later.",
+      "invalid_data": "The downloaded regulated tariffs grid is invalid. Try again later."
     },
     "abort": {
-      "cannot_connect": "Cannot download the regulated tariffs grid. Try again later.",
-      "invalid_data": "The downloaded regulated tariffs grid is invalid. Try again later.",
       "no_power_available": "No subscribed power is currently offered for this option."
     }
   },

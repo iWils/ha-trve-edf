@@ -15,17 +15,22 @@ Tempo comes with 0.2.0.
 ### Added
 - Configuration of a contract: tariff option, subscribed power among those in force
   in the CRE grid, and off-peak hours for HP/HC (strictly validated, stored in a
-  canonical form, editable in the options). Several contracts can be added.
+  canonical form, editable in the options). A failed download shows an error that
+  can be retried. Several contracts can be added.
 - Sensors: current price, current tariff period, yearly subscription, price of each
-  period and, for HP/HC, next price change. All prices include taxes.
+  period and, for HP/HC, next price change (period switch, or new tariff row at
+  midnight). All prices include taxes.
 - Tariff grids downloaded once a day from the CRE open data on data.gouv.fr, read by
   column name, with the row in force chosen by its validity dates; dates, decimals
   and encodings are parsed tolerantly and invalid grids are rejected.
 - Exact updates at each change of tariff period and at midnight, in French time
   (Europe/Paris) whatever the system time zone, including on daylight saving time
   days; no polling.
-- The last known prices are kept for up to 7 days when the grid cannot be
-  downloaded, then become unavailable rather than possibly wrong.
+- The grid is saved and shared by the contracts of the same option: reused without
+  download for a day, and still used after a restart while the CRE cannot be
+  reached, up to 7 days after its download. Prices then become unavailable rather
+  than possibly wrong, as they do when the grid holds conflicting rows for the same
+  power and day.
 - Specification (`docs/cahier-des-charges.md`, in French), README in French and
   English, GPL-3.0 license, guidelines for AI-assisted development (`CLAUDE.md`).
 - Continuous integration (ruff, strict mypy, tests with coverage, hassfest, HACS

@@ -24,11 +24,11 @@
       }
     },
     "error": {
-      "invalid_off_peak_hours": "Heures creuses invalides : utilisez des plages HH:MM-HH:MM séparées par des virgules, sans chevauchement."
+      "invalid_off_peak_hours": "Heures creuses invalides : utilisez des plages HH:MM-HH:MM séparées par des virgules, sans chevauchement.",
+      "cannot_connect": "Impossible de télécharger la grille des tarifs réglementés. Réessayez plus tard.",
+      "invalid_data": "La grille des tarifs réglementés téléchargée est invalide. Réessayez plus tard."
     },
     "abort": {
-      "cannot_connect": "Impossible de télécharger la grille des tarifs réglementés. Réessayez plus tard.",
-      "invalid_data": "La grille des tarifs réglementés téléchargée est invalide. Réessayez plus tard.",
       "no_power_available": "Aucune puissance souscrite n'est actuellement proposée pour cette option."
     }
   },

@@ -104,21 +104,29 @@ async def test_hphc_contract_with_off_peak_hours(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.parametrize(
-    ("side_effect", "reason"),
+    ("side_effect", "error"),
     [
         (CreConnectionError("offline"), "cannot_connect"),
         (CreDataError("broken"), "invalid_data"),
     ],
 )
-async def test_grid_download_errors(
-    hass: HomeAssistant, side_effect: Exception, reason: str
+async def test_grid_download_errors_can_be_retried(
+    hass: HomeAssistant, side_effect: Exception, error: str
 ) -> None:
-    """The flow stops with a clear reason when the grid cannot be used."""
+    """A failed download shows an error on the first step, which can be retried."""
     with patch(CONFIG_FLOW_FETCH, side_effect=side_effect):
         result = await _start(hass, TariffOption.BASE)
 
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == reason
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": error}
+
+    with patch(CONFIG_FLOW_FETCH, return_value=BASE_GRID):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_OPTION: TariffOption.BASE.value}
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "power"
 
 
 async def test_no_power_in_force(hass: HomeAssistant) -> None:

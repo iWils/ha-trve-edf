@@ -386,6 +386,23 @@ def test_row_in_force_empty_grid() -> None:
     assert row_in_force(TariffGrid(HPHC, ()), date(2025, 8, 1), 6) is None
 
 
+def test_row_in_force_conflicting_rows_of_the_same_day() -> None:
+    """Rows of the same power and start day with other amounts are ambiguous."""
+    erratum = hphc_row(date(2025, 8, 1), None, 6, "0.2150")
+    grid = TariffGrid(HPHC, (OLD_ROW, NEW_ROW, erratum))
+
+    assert row_in_force(grid, date(2025, 8, 1), 6) is None
+    assert row_in_force(grid, date(2025, 7, 31), 6) is OLD_ROW
+
+
+def test_row_in_force_duplicated_row() -> None:
+    """The same row written twice is not ambiguous."""
+    duplicate = hphc_row(date(2025, 8, 1), None, 6, "0.2100")
+    grid = TariffGrid(HPHC, (NEW_ROW, duplicate))
+
+    assert row_in_force(grid, date(2025, 8, 1), 6) is NEW_ROW
+
+
 @pytest.mark.parametrize(
     ("day", "expected"),
     [

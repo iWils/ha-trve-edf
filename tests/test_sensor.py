@@ -144,3 +144,22 @@ async def test_device_and_unique_ids(
     assert device.name == entry.title
     assert device.entry_type is dr.DeviceEntryType.SERVICE
     assert entity_id(hass, entry, "current_price") is not None
+
+
+async def test_prices_become_unavailable_exactly_when_the_grid_is_too_old(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """The clock makes prices unavailable at the 7-day limit, without refresh."""
+    start = paris(2026, 11, 11, 12, 0)
+    freezer.move_to(start)
+    entry = await setup_contract(hass, TariffOption.BASE)
+    coordinator = entry.runtime_data
+    coordinator.update_interval = None
+    coordinator._unschedule_refresh()
+
+    await _at(hass, freezer, start + timedelta(days=7, minutes=-1))
+    assert state(hass, entry, "current_price").state == "0.2001"
+
+    await _at(hass, freezer, start + timedelta(days=7))
+    assert state(hass, entry, "current_price").state == STATE_UNAVAILABLE
+    assert state(hass, entry, "current_period").state == "base"

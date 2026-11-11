@@ -60,15 +60,16 @@ Plusieurs contrats peuvent être ajoutés, par exemple pour plusieurs logements.
 | Abonnement annuel | toutes | Montant annuel TTC, en € |
 | Prix Base | Base | Prix du kWh, en €/kWh TTC |
 | Prix heures pleines, prix heures creuses | HP/HC | Prix du kWh de chaque période |
-| Prochain changement de prix | HP/HC | Date et heure du prochain passage HP/HC |
+| Prochain changement de prix | HP/HC | Date et heure du prochain changement : passage HP/HC, ou nouvelle grille tarifaire à minuit |
 
 Pour le tableau de bord Énergie, choisissez « Utiliser une entité avec le prix
 actuel » et sélectionnez le capteur « Prix actuel ».
 
 Les prix sont recalculés à l'instant exact de chaque changement de période, à l'heure
-française. Si la grille tarifaire ne peut plus être téléchargée, les derniers prix
-connus restent utilisés pendant 7 jours au plus, puis deviennent indisponibles plutôt
-que d'afficher une valeur peut-être fausse.
+française. La grille tarifaire est téléchargée une fois par jour et enregistrée. Si elle ne peut
+plus être téléchargée, la dernière grille connue reste utilisée, y compris après un
+redémarrage, pendant 7 jours au plus après son téléchargement : les prix deviennent
+ensuite indisponibles plutôt que d'afficher une valeur peut-être fausse.
 
 ## Développement
 

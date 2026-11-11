@@ -80,10 +80,20 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Choose the tariff option."""
+        """Choose the tariff option, then download its grid."""
+        errors: dict[str, str] = {}
         if user_input is not None:
             self._option = TariffOption(user_input[CONF_OPTION])
-            return await self.async_step_power()
+            try:
+                self._grid = await async_fetch_grid(
+                    async_get_clientsession(self.hass), self._option
+                )
+            except CreConnectionError:
+                errors["base"] = "cannot_connect"
+            except CreDataError:
+                errors["base"] = "invalid_data"
+            else:
+                return await self.async_step_power()
 
         schema = vol.Schema(
             {
@@ -96,22 +106,17 @@ class TrveEdfConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             }
         )
-        return self.async_show_form(step_id="user", data_schema=schema)
+        return self.async_show_form(
+            step_id="user",
+            data_schema=self.add_suggested_values_to_schema(schema, user_input),
+            errors=errors,
+        )
 
     async def async_step_power(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Choose the subscribed power among those in force for the option."""
-        if self._grid is None:
-            try:
-                self._grid = await async_fetch_grid(
-                    async_get_clientsession(self.hass), self._option
-                )
-            except CreConnectionError:
-                return self.async_abort(reason="cannot_connect")
-            except CreDataError:
-                return self.async_abort(reason="invalid_data")
-
+        assert self._grid is not None
         powers = available_powers(self._grid, dt_util.now(PARIS).date())
         if not powers:
             return self.async_abort(reason="no_power_available")
