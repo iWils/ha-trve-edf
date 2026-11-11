@@ -54,6 +54,11 @@ Home Assistant 2025.1 ou plus récent est nécessaire.
 
 Plusieurs contrats peuvent être ajoutés, par exemple pour plusieurs logements.
 
+Pour changer d'option ou de puissance, inutile de supprimer l'intégration : dans
+Paramètres → Appareils et services → Tarifs réglementés EDF (TRVE), ouvrez le menu
+⋮ du contrat et choisissez « Reconfigurer ». Les capteurs de l'ancienne option sont
+alors retirés.
+
 ## Entités
 
 | Entité | Options | Description |
@@ -83,6 +88,16 @@ Les couleurs Tempo viennent de Jour Tempo, qui redistribue les données de RTE, 
 une source de secours. Elles sont demandées seulement quand il en manque une
 (celle de demain, à partir de 10 h 30), enregistrées et partagées par tous les
 contrats Tempo.
+
+## En cas de problème
+
+- Si votre puissance souscrite n'a plus de tarif en vigueur dans la grille de la CRE,
+  une notification apparaît dans Paramètres → Réparations : reconfigurez alors le
+  contrat.
+- Les diagnostics du contrat (menu ⋮ → « Télécharger les diagnostics ») montrent la
+  grille utilisée, le tarif en vigueur, la période et le prix calculés, et les
+  couleurs Tempo connues. Ils ne contiennent aucune donnée personnelle : joignez-les
+  à une issue GitHub pour signaler un prix faux.
 
 ## Développement
 

@@ -53,6 +53,11 @@ Home Assistant 2025.1 or newer is required.
 
 Several contracts can be added, for example for several homes.
 
+To change the option or the power, there is no need to remove the integration: in
+Settings → Devices & services → Tarifs réglementés EDF (TRVE), open the ⋮ menu of
+the contract and choose "Reconfigure". The sensors of the former option are then
+removed.
+
 ## Entities
 
 | Entity | Options | Description |
@@ -80,6 +85,15 @@ Tempo day is known.
 Tempo colors come from Jour Tempo, which redistributes the RTE data, with a fallback
 source. They are only asked for when one is missing (tomorrow's, from 10:30), saved
 and shared by all the Tempo contracts.
+
+## Troubleshooting
+
+- If your subscribed power has no tariff in force in the CRE grid anymore, a
+  notification appears in Settings → Repairs: reconfigure the contract.
+- The diagnostics of the contract (⋮ menu → "Download diagnostics") show the grid in
+  use, the tariff in force, the computed period and price, and the known Tempo
+  colors. They hold no personal data: attach them to a GitHub issue to report a
+  wrong price.
 
 ## Development
 

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-11
+
+Quality.
+
+### Added
+- Reconfiguration: change the option, the subscribed power or the off-peak hours of
+  a contract without removing it (⋮ menu → Reconfigure); the current values are
+  suggested and the sensors of a former option are removed.
+- Repair issue when the subscribed power has no tariff in force in the CRE grid,
+  cleared when it comes back or when the contract is removed.
+- Diagnostics of a contract: grid in use, tariff in force, computed period and
+  price, next price change and known Tempo colors, without personal data.
+- Icons for every sensor.
+- The tests also run on Home Assistant 2025.1, the minimum version.
+
+### Changed
+- Invalid off-peak hours show a precise message: no range, bad format, same start
+  and end, or overlapping ranges.
+
 ## [0.2.0] - 2026-11-11
 
 The Tempo option.
@@ -58,6 +77,7 @@ Tempo comes with 0.2.0.
 - Continuous integration (ruff, strict mypy, tests with coverage, hassfest, HACS
   Action) and automated releases.
 
-[Unreleased]: https://github.com/iWils/ha-trve-edf/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/iWils/ha-trve-edf/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/iWils/ha-trve-edf/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/iWils/ha-trve-edf/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/iWils/ha-trve-edf/releases/tag/0.1.0

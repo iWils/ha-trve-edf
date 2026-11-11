@@ -47,6 +47,10 @@ from official open data (CRE prices, RTE Tempo colors).
 
 - Every behavior change comes with tests.
 - Conventional commits (`feat:`, `fix:`, `docs:`, `ci:`, `refactor:`, `test:`…).
+- No AI attribution anywhere: no `Co-Authored-By`, session links or "Generated
+  with/by" mentions in commits, pull requests or release notes. Commits are signed
+  with the maintainer's GitHub identity
+  (`iWils <56263502+iWils@users.noreply.github.com>`).
 - Work on a branch and open a pull request to `main`; never push to `main` directly.
 - Versions follow SemVer: `0.x` during development, `1.0.0` after validation on a
   real Home Assistant instance.

@@ -1,7 +1,7 @@
 # Cahier des charges — ha-trve-edf
 
-> Statut : **validé** jusqu'à la version 1.0 ; version 1.1 (sections 4.2, 6.2 et
-> 6.3, pour Tempo) **à valider** · 11 novembre 2026
+> Statut : **validé** · Version du document : 1.1 (Tempo : sections 4.2, 6.2 et
+> 6.3) · 11 novembre 2026
 >
 > Ce document décrit ce que fait l'intégration et comment elle est conçue. Il fait
 > référence pour tout développement, humain ou assisté par IA. Toute évolution du
@@ -239,7 +239,7 @@ custom_components/trve_edf/
 | socle | CI, release automatique, squelette de l'intégration, outillage de tests |
 | 0.1.0 | Base et HP/HC : configuration, prix, période, abonnement |
 | 0.2.0 | Tempo : couleurs, prix du jour Tempo, sources principale et de secours |
-| 0.3.0 | Qualité : reconfiguration, diagnostics, réparations, icônes |
+| 0.3.0 | Qualité : reconfiguration, diagnostics, réparations, icônes, messages d'erreur détaillés, tests sur Home Assistant 2025.1 |
 | 1.0.0 | Validation réelle côte à côte avec l'ancienne intégration, documentation |
 
 ## 10. Migration depuis l'intégration `tarif_edf`
