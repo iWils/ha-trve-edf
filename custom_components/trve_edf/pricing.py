@@ -1,8 +1,13 @@
 """Business rules of the EDF regulated tariffs (TRVE).
 
 Pure functions with no Home Assistant dependency: off-peak ranges, tariff row in
-force, current tariff period and price, next period change. Every time rule uses
-the French legal time (``Europe/Paris``), whatever the time zone of the system.
+force, current tariff period and price, next period change, Tempo day and color,
+and when to ask the Tempo colors again. Every time rule uses the French legal
+time (``Europe/Paris``), whatever the time zone of the system.
+
+The off-peak hours of the HP/HC option are those of the contract; those of the
+Tempo option are fixed nationally, from 22:00 to 06:00. A Tempo day runs from
+06:00 to 06:00 the next day, so its color changes when off-peak hours end.
 
 Instants are compared in UTC inside this module: two aware datetimes of the same
 zone compare by wall-clock time, which is wrong in the hour repeated in autumn.
@@ -10,17 +15,39 @@ zone compare by wall-clock time, which is wrong in the hour repeated in autumn.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 import re
 from typing import Final
 from zoneinfo import ZoneInfo
 
-from .models import OffPeakRange, TariffGrid, TariffOption, TariffPeriod, TariffRow
+from .models import (
+    OffPeakRange,
+    PriceKey,
+    TariffGrid,
+    TariffOption,
+    TariffPeriod,
+    TariffRow,
+    TempoColor,
+)
 
 PARIS: Final = ZoneInfo("Europe/Paris")
 """Time zone of every tariff rule: the French legal time."""
+
+TEMPO_OFF_PEAK: Final[tuple[OffPeakRange, ...]] = (
+    OffPeakRange(time(22, 0), time(6, 0)),
+)
+"""Off-peak ranges of the Tempo option, fixed nationally."""
+
+TEMPO_DAY_START: Final = time(6, 0)
+"""Wall-clock time at which a Tempo day starts; it ends at 06:00 the next day."""
+
+TEMPO_PUBLICATION: Final = time(10, 30)
+"""Wall-clock time from which, the day before, the color of a day may be known."""
+
+TEMPO_RETRY_INTERVAL: Final = timedelta(minutes=15)
+"""Delay before asking the Tempo colors again while an expected color is missing."""
 
 _MINUTES_PER_DAY: Final = 24 * 60
 
@@ -196,11 +223,13 @@ def current_period(
         option: Tariff option of the contract.
         now: Timezone-aware instant; the rules use its wall-clock time in Paris.
         off_peak: Off-peak ranges of the contract, needed by the HP/HC option.
+            The Base option ignores them, and so does the Tempo option, whose
+            off-peak ranges are fixed (`TEMPO_OFF_PEAK`): they may be empty.
 
     Returns:
-        The base period for the Base option; for the HP/HC option, the
-        off-peak period during the off-peak ranges and the peak period
-        otherwise.
+        The base period for the Base option; for the HP/HC and Tempo options,
+        the off-peak period during the off-peak ranges of the option and the
+        peak period otherwise.
 
     Raises:
         ValueError: The instant is naive, or the option is HP/HC and there is no
@@ -209,9 +238,7 @@ def current_period(
     local = _to_paris(now)
     if option is TariffOption.BASE:
         return TariffPeriod.BASE
-    if not off_peak:
-        raise ValueError("The HP/HC option needs off-peak ranges")
-    return _hphc_period(local, off_peak)
+    return _period_at(local, _off_peak_of(option, off_peak))
 
 
 def _to_paris(now: datetime) -> datetime:
@@ -221,26 +248,62 @@ def _to_paris(now: datetime) -> datetime:
     return now.astimezone(PARIS)
 
 
-def _hphc_period(instant: datetime, off_peak: Sequence[OffPeakRange]) -> TariffPeriod:
-    """Return the HP/HC period at an aware instant."""
+def _off_peak_of(
+    option: TariffOption, off_peak: Sequence[OffPeakRange]
+) -> Sequence[OffPeakRange]:
+    """Return the off-peak ranges of an option with off-peak hours.
+
+    Those of the contract for HP/HC, which must not be empty; the fixed ranges
+    for Tempo, whatever the ranges of the contract.
+    """
+    if option is TariffOption.TEMPO:
+        return TEMPO_OFF_PEAK
+    if not off_peak:
+        raise ValueError("The HP/HC option needs off-peak ranges")
+    return off_peak
+
+
+def _period_at(instant: datetime, off_peak: Sequence[OffPeakRange]) -> TariffPeriod:
+    """Return the period of an option with off-peak hours at an aware instant."""
     wall_clock = instant.astimezone(PARIS).time()
     if is_off_peak(wall_clock, off_peak):
         return TariffPeriod.OFF_PEAK
     return TariffPeriod.PEAK
 
 
-def current_price(row: TariffRow, period: TariffPeriod) -> Decimal | None:
-    """Return the price of the kWh of a period.
+def price_key(
+    option: TariffOption, period: TariffPeriod, color: TempoColor | None = None
+) -> PriceKey | None:
+    """Return the price key of a period, and of a Tempo color for Tempo.
+
+    Args:
+        option: Tariff option of the contract.
+        period: Current tariff period.
+        color: Color of the current Tempo day, for the Tempo option.
+
+    Returns:
+        The key of the price of the kWh, or None for Tempo when the color is not
+        known.
+    """
+    if option is not TariffOption.TEMPO:
+        return PriceKey(period.value)
+    if color is None:
+        return None
+    return PriceKey(f"{color.value}_{period.value}")
+
+
+def current_price(row: TariffRow, key: PriceKey) -> Decimal | None:
+    """Return a price of the kWh of a tariff row.
 
     Args:
         row: Tariff row in force.
-        period: Tariff period.
+        key: Key of the price.
 
     Returns:
-        The price in euros, taxes included, or None if the row has no price for
-        that period.
+        The price in euros, taxes included, or None if the row has no such
+        price.
     """
-    return row.prices.get(period)
+    return row.prices.get(key)
 
 
 def next_period_change(
@@ -255,10 +318,15 @@ def next_period_change(
     back from 03:00 to 02:00, and start again at the second 02:30. A boundary
     between two touching ranges is not a change.
 
+    The Tempo period changes at 22:00 and 06:00, which the clock always shows
+    once. At 06:00, the end of off-peak hours, a new Tempo day also starts: the
+    color, and so the price, may change at that same instant.
+
     Args:
         option: Tariff option of the contract.
         now: Timezone-aware instant.
-        off_peak: Off-peak ranges of the contract, needed by the HP/HC option.
+        off_peak: Off-peak ranges of the contract, needed by the HP/HC option and
+            ignored by the other options (see `current_period`).
 
     Returns:
         The earliest instant strictly after now at which the period changes, in
@@ -271,15 +339,16 @@ def next_period_change(
     period = current_period(option, now, off_peak)
     if option is TariffOption.BASE:
         return None
+    ranges = _off_peak_of(option, off_peak)
     after = now.astimezone(UTC)
-    for instant in _clock_events(now.astimezone(PARIS).date(), off_peak):
-        if instant > after and _hphc_period(instant, off_peak) is not period:
+    for instant in _clock_events(now.astimezone(PARIS).date(), ranges):
+        if instant > after and _period_at(instant, ranges) is not period:
             return instant.astimezone(PARIS)
     return None
 
 
 def _clock_events(first_day: date, off_peak: Sequence[OffPeakRange]) -> list[datetime]:
-    """Return the instants at which the HP/HC period may change, in UTC, sorted.
+    """Return the instants at which the period may change, in UTC, sorted.
 
     The period only depends on the wall-clock time: it may change when the clock
     shows the start or the end of a range, and when the clock is moved.
@@ -359,3 +428,125 @@ def next_midnight(now: datetime) -> datetime:
     """
     tomorrow = _to_paris(now).date() + timedelta(days=1)
     return _local_midnight(tomorrow).astimezone(PARIS)
+
+
+def tempo_day(now: datetime) -> date:
+    """Return the Tempo day in force at an instant.
+
+    A Tempo day runs from 06:00 to 06:00 the next day: before 06:00, the day of
+    the day before applies. Like the periods, the day follows the wall-clock
+    time in Paris, so the Tempo day that holds the clock change lasts 23 hours
+    in spring and 25 hours in autumn.
+
+    Args:
+        now: Timezone-aware instant.
+
+    Returns:
+        The date of the Tempo day: the date in Paris from 06:00, and the date
+        before until 06:00.
+
+    Raises:
+        ValueError: The instant is naive.
+    """
+    local = _to_paris(now)
+    if local.time() >= TEMPO_DAY_START:
+        return local.date()
+    return local.date() - timedelta(days=1)
+
+
+def tempo_color(colors: Mapping[date, TempoColor], now: datetime) -> TempoColor | None:
+    """Return the color of the Tempo day in force at an instant.
+
+    Args:
+        colors: Known colors, by day.
+        now: Timezone-aware instant.
+
+    Returns:
+        The color of the day given by `tempo_day`, or None if it is not known.
+
+    Raises:
+        ValueError: The instant is naive.
+    """
+    return colors.get(tempo_day(now))
+
+
+def tempo_publication(day: date) -> datetime:
+    """Return the instant from which the color of a Tempo day may be known.
+
+    Args:
+        day: Day whose color is published.
+
+    Returns:
+        The day before, at `TEMPO_PUBLICATION`, in Paris time. The clock is
+        only moved between 02:00 and 03:00: that time is never skipped nor
+        repeated.
+    """
+    eve = day - timedelta(days=1)
+    return datetime.combine(eve, TEMPO_PUBLICATION, tzinfo=PARIS)
+
+
+def tempo_days_expected(now: datetime) -> tuple[date, ...]:
+    """Return the days whose color is needed and may be known at an instant.
+
+    Args:
+        now: Timezone-aware instant.
+
+    Returns:
+        Yesterday and today in Paris, and tomorrow once its publication time
+        is reached (see `tempo_publication`), in date order.
+
+    Raises:
+        ValueError: The instant is naive.
+    """
+    today = _to_paris(now).date()
+    tomorrow = today + timedelta(days=1)
+    days = (today - timedelta(days=1), today)
+    if now.astimezone(UTC) >= tempo_publication(tomorrow).astimezone(UTC):
+        return (*days, tomorrow)
+    return days
+
+
+def tempo_days_missing(
+    now: datetime, colors: Mapping[date, TempoColor]
+) -> tuple[date, ...]:
+    """Return the days whose color is expected at an instant but not known.
+
+    Args:
+        now: Timezone-aware instant.
+        colors: Known colors, by day.
+
+    Returns:
+        The days of `tempo_days_expected` that have no color, in date order.
+
+    Raises:
+        ValueError: The instant is naive.
+    """
+    return tuple(day for day in tempo_days_expected(now) if day not in colors)
+
+
+def next_tempo_refresh(now: datetime, colors: Mapping[date, TempoColor]) -> datetime:
+    """Return when to ask the source of the Tempo colors again.
+
+    A known color is never asked again: while every expected color is known,
+    there is nothing to ask until the next day becomes expected.
+
+    Args:
+        now: Timezone-aware instant.
+        colors: Known colors, by day.
+
+    Returns:
+        In Paris time: `TEMPO_RETRY_INTERVAL` after now if an expected color is
+        missing (see `tempo_days_missing`); otherwise the next instant strictly
+        after now at which a new day becomes expected, the publication time of
+        tomorrow or, once it is reached, that of the day after tomorrow.
+
+    Raises:
+        ValueError: The instant is naive.
+    """
+    if tempo_days_missing(now, colors):
+        return (now.astimezone(UTC) + TEMPO_RETRY_INTERVAL).astimezone(PARIS)
+    tomorrow = _to_paris(now).date() + timedelta(days=1)
+    publication = tempo_publication(tomorrow)
+    if now.astimezone(UTC) < publication.astimezone(UTC):
+        return publication
+    return tempo_publication(tomorrow + timedelta(days=1))
