@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .coordinator import TrveEdfConfigEntry, TrveEdfCoordinator
+from .models import TariffOption
+from .tempo import async_acquire_tempo_colors, async_release_tempo_colors
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
@@ -13,6 +17,10 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 async def async_setup_entry(hass: HomeAssistant, entry: TrveEdfConfigEntry) -> bool:
     """Set up a TRVE contract from a config entry."""
     coordinator = TrveEdfCoordinator(hass, entry)
+    if coordinator.option is TariffOption.TEMPO:
+        tempo = await async_acquire_tempo_colors(hass)
+        entry.async_on_unload(partial(async_release_tempo_colors, hass, tempo))
+        coordinator.async_attach_tempo(tempo)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 

@@ -26,6 +26,9 @@ from .common import (
     CONFIG_FLOW_FETCH,
     COORDINATOR_FETCH,
     HPHC_GRID,
+    TEMPO_FETCH,
+    TEMPO_GRID,
+    FakeTempoSource,
     paris,
     setup_contract,
 )
@@ -101,6 +104,36 @@ async def test_hphc_contract_with_off_peak_hours(hass: HomeAssistant) -> None:
     assert result["title"] == "Tarifs réglementés EDF \u2013 HP/HC 9 kVA"
     assert result["data"] == {CONF_OPTION: "hphc", CONF_POWER: 9}
     assert result["options"] == {CONF_OFF_PEAK_HOURS: "22:00-06:00"}
+
+
+async def test_tempo_contract(hass: HomeAssistant) -> None:
+    """A Tempo contract needs its power only: its off-peak hours are fixed."""
+    with patch(CONFIG_FLOW_FETCH, return_value=TEMPO_GRID):
+        result = await _start(hass, TariffOption.TEMPO)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "power"
+    schema = result["data_schema"]
+    assert schema is not None
+    assert [
+        option["value"] for option in schema.schema[CONF_POWER].config["options"]
+    ] == [
+        "6",
+        "9",
+    ]
+
+    with (
+        patch(COORDINATOR_FETCH, return_value=TEMPO_GRID),
+        patch(TEMPO_FETCH, FakeTempoSource()),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_POWER: "9"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Tarifs réglementés EDF \u2013 Tempo 9 kVA"
+    assert result["data"] == {CONF_OPTION: "tempo", CONF_POWER: 9}
+    assert result["options"] == {}
 
 
 @pytest.mark.parametrize(

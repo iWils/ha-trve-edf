@@ -7,21 +7,29 @@ never equals an instant of another zone.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from itertools import pairwise
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.trve_edf.models import (
     OffPeakRange,
+    PriceKey,
     TariffGrid,
     TariffOption,
     TariffPeriod,
     TariffRow,
+    TempoColor,
 )
 from custom_components.trve_edf.pricing import (
     PARIS,
+    TEMPO_DAY_START,
+    TEMPO_OFF_PEAK,
+    TEMPO_PUBLICATION,
+    TEMPO_RETRY_INTERVAL,
     InvalidOffPeakRangesError,
     available_powers,
     current_period,
@@ -30,13 +38,25 @@ from custom_components.trve_edf.pricing import (
     is_off_peak,
     next_midnight,
     next_period_change,
+    next_tempo_refresh,
     parse_off_peak_ranges,
+    price_key,
     row_in_force,
+    tempo_color,
+    tempo_day,
+    tempo_days_expected,
+    tempo_days_missing,
+    tempo_publication,
 )
 
 BASE = TariffOption.BASE
 HPHC = TariffOption.HPHC
+TEMPO = TariffOption.TEMPO
+BLUE = TempoColor.BLUE
+WHITE = TempoColor.WHITE
+RED = TempoColor.RED
 NEW_YORK = ZoneInfo("America/New_York")
+PLUS_FIVE = timezone(timedelta(hours=5))
 
 SPRING_DAY = date(2026, 3, 29)
 """Clock moved from 02:00 CET to 03:00 CEST, at 01:00 UTC."""
@@ -330,8 +350,8 @@ def hphc_row(
         power_kva=power_kva,
         subscription=Decimal("150.00"),
         prices={
-            TariffPeriod.PEAK: Decimal(peak),
-            TariffPeriod.OFF_PEAK: Decimal("0.1500"),
+            PriceKey.PEAK: Decimal(peak),
+            PriceKey.OFF_PEAK: Decimal("0.1500"),
         },
     )
 
@@ -485,7 +505,7 @@ def test_current_period_hphc(text: str, now: datetime, expected: str) -> None:
     assert current_period(HPHC, now, ranges) is TariffPeriod(expected)
 
 
-@pytest.mark.parametrize("option", [BASE, HPHC])
+@pytest.mark.parametrize("option", [BASE, HPHC, TEMPO])
 def test_current_period_naive_datetime(option: TariffOption) -> None:
     """A naive datetime is rejected: its time zone is unknown."""
     with pytest.raises(ValueError, match="timezone-aware"):
@@ -503,27 +523,60 @@ BASE_ROW = TariffRow(
     end=None,
     power_kva=6,
     subscription=Decimal("158.40"),
-    prices={TariffPeriod.BASE: Decimal("0.1952")},
+    prices={PriceKey.BASE: Decimal("0.1952")},
 )
 
 
 @pytest.mark.parametrize(
-    ("row", "period", "expected"),
+    ("row", "key", "expected"),
     [
-        pytest.param(BASE_ROW, TariffPeriod.BASE, Decimal("0.1952"), id="base"),
-        pytest.param(BASE_ROW, TariffPeriod.PEAK, None, id="base-row-peak"),
-        pytest.param(ROW_6_KVA, TariffPeriod.PEAK, Decimal("0.2100"), id="peak"),
-        pytest.param(
-            ROW_6_KVA, TariffPeriod.OFF_PEAK, Decimal("0.1500"), id="off-peak"
-        ),
-        pytest.param(ROW_6_KVA, TariffPeriod.BASE, None, id="hphc-row-base"),
+        pytest.param(BASE_ROW, PriceKey.BASE, Decimal("0.1952"), id="base"),
+        pytest.param(BASE_ROW, PriceKey.PEAK, None, id="base-row-peak"),
+        pytest.param(ROW_6_KVA, PriceKey.PEAK, Decimal("0.2100"), id="peak"),
+        pytest.param(ROW_6_KVA, PriceKey.OFF_PEAK, Decimal("0.1500"), id="off-peak"),
+        pytest.param(ROW_6_KVA, PriceKey.BASE, None, id="hphc-row-base"),
     ],
 )
-def test_current_price(
-    row: TariffRow, period: TariffPeriod, expected: Decimal | None
+def test_current_price(row: TariffRow, key: PriceKey, expected: Decimal | None) -> None:
+    """The price is the one of the key, or None if the row has none."""
+    assert current_price(row, key) == expected
+
+
+@pytest.mark.parametrize(
+    ("option", "period", "color", "expected"),
+    [
+        pytest.param(BASE, TariffPeriod.BASE, None, PriceKey.BASE, id="base"),
+        pytest.param(HPHC, TariffPeriod.PEAK, None, PriceKey.PEAK, id="hphc-peak"),
+        pytest.param(
+            HPHC, TariffPeriod.OFF_PEAK, None, PriceKey.OFF_PEAK, id="hphc-off-peak"
+        ),
+        pytest.param(
+            TariffOption.TEMPO,
+            TariffPeriod.PEAK,
+            TempoColor.RED,
+            PriceKey.RED_PEAK,
+            id="tempo-red-peak",
+        ),
+        pytest.param(
+            TariffOption.TEMPO,
+            TariffPeriod.OFF_PEAK,
+            TempoColor.BLUE,
+            PriceKey.BLUE_OFF_PEAK,
+            id="tempo-blue-off-peak",
+        ),
+        pytest.param(
+            TariffOption.TEMPO, TariffPeriod.PEAK, None, None, id="tempo-unknown-color"
+        ),
+    ],
+)
+def test_price_key(
+    option: TariffOption,
+    period: TariffPeriod,
+    color: TempoColor | None,
+    expected: PriceKey | None,
 ) -> None:
-    """The price is the one of the period, or None if the row has none."""
-    assert current_price(row, period) == expected
+    """The price key follows the period, and the color for Tempo."""
+    assert price_key(option, period, color) == expected
 
 
 # Next period change.
@@ -535,7 +588,7 @@ def test_next_period_change_base(ranges: tuple[OffPeakRange, ...]) -> None:
     assert next_period_change(BASE, paris(2026, 1, 15, 12), ranges) is None
 
 
-@pytest.mark.parametrize("option", [BASE, HPHC])
+@pytest.mark.parametrize("option", [BASE, HPHC, TEMPO])
 def test_next_period_change_naive_datetime(option: TariffOption) -> None:
     """A naive datetime is rejected."""
     with pytest.raises(ValueError, match="timezone-aware"):
@@ -948,3 +1001,773 @@ def test_next_midnight_naive_datetime() -> None:
     """A naive datetime is rejected."""
     with pytest.raises(ValueError, match="timezone-aware"):
         next_midnight(datetime(2026, 1, 15, 12))
+
+
+# Tempo periods.
+
+
+def dates(year: int, month: int, *days: int) -> tuple[date, ...]:
+    """Return days of one month, in the given order."""
+    return tuple(date(year, month, day) for day in days)
+
+
+IGNORED_RANGES = [
+    pytest.param((), id="no-range"),
+    pytest.param(parse_off_peak_ranges("06:00-22:00"), id="inverted-ranges"),
+    pytest.param(parse_off_peak_ranges("12:00-14:00"), id="other-ranges"),
+]
+"""Off-peak ranges of the contract, which the Tempo option ignores."""
+
+
+def test_tempo_constants() -> None:
+    """Tempo off-peak hours run from 22:00 to 06:00, when a Tempo day starts."""
+    assert parse_off_peak_ranges("22:00-06:00") == TEMPO_OFF_PEAK
+    assert TEMPO_DAY_START == time(6) == TEMPO_OFF_PEAK[0].end
+    assert time(10, 30) == TEMPO_PUBLICATION
+    assert timedelta(minutes=15) == TEMPO_RETRY_INTERVAL
+
+
+@pytest.mark.parametrize("ranges", IGNORED_RANGES)
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        pytest.param(paris(2026, 1, 15, 12), "peak", id="noon"),
+        pytest.param(paris(2026, 1, 15, 21, 59, 59), "peak", id="before-22:00"),
+        pytest.param(paris(2026, 1, 15, 22), "off_peak", id="22:00"),
+        pytest.param(paris(2026, 1, 16), "off_peak", id="midnight"),
+        pytest.param(paris(2026, 1, 16, 5, 59, 59), "off_peak", id="before-06:00"),
+        pytest.param(paris(2026, 1, 16, 6), "peak", id="06:00"),
+        pytest.param(utc(2026, 1, 15, 21), "off_peak", id="utc-winter-22:00"),
+        pytest.param(utc(2026, 7, 1, 19, 59, 59), "peak", id="utc-summer-21:59:59"),
+        pytest.param(utc(2026, 7, 1, 20), "off_peak", id="utc-summer-22:00"),
+        pytest.param(utc(2026, 7, 1, 3, 59, 59), "off_peak", id="utc-summer-05:59:59"),
+        pytest.param(utc(2026, 7, 1, 4), "peak", id="utc-summer-06:00"),
+        pytest.param(
+            datetime(2026, 1, 15, 16, 30, tzinfo=NEW_YORK), "off_peak", id="new-york"
+        ),
+        pytest.param(
+            datetime(2026, 1, 15, 22, 30, tzinfo=PLUS_FIVE), "peak", id="fixed-offset"
+        ),
+        pytest.param(utc(2026, 3, 28, 20, 59, 59), "peak", id="spring-eve-21:59:59"),
+        pytest.param(utc(2026, 3, 28, 21), "off_peak", id="spring-eve-22:00-cet"),
+        pytest.param(utc(2026, 3, 29, 0, 59, 59), "off_peak", id="spring-01:59:59-cet"),
+        pytest.param(utc(2026, 3, 29, 1), "off_peak", id="spring-03:00-cest"),
+        pytest.param(
+            utc(2026, 3, 29, 3, 59, 59), "off_peak", id="spring-05:59:59-cest"
+        ),
+        pytest.param(utc(2026, 3, 29, 4), "peak", id="spring-06:00-cest"),
+        pytest.param(utc(2026, 3, 29, 19, 59, 59), "peak", id="spring-21:59:59-cest"),
+        pytest.param(utc(2026, 3, 29, 20), "off_peak", id="spring-22:00-cest"),
+        pytest.param(
+            utc(2026, 10, 24, 19, 59, 59), "peak", id="autumn-eve-21:59:59-cest"
+        ),
+        pytest.param(utc(2026, 10, 24, 20), "off_peak", id="autumn-eve-22:00-cest"),
+        pytest.param(utc(2026, 10, 25, 0, 30), "off_peak", id="autumn-02:30-cest"),
+        pytest.param(utc(2026, 10, 25, 1, 30), "off_peak", id="autumn-02:30-cet"),
+        pytest.param(utc(2026, 10, 25, 4), "off_peak", id="autumn-05:00-cet"),
+        pytest.param(
+            utc(2026, 10, 25, 4, 59, 59), "off_peak", id="autumn-05:59:59-cet"
+        ),
+        pytest.param(utc(2026, 10, 25, 5), "peak", id="autumn-06:00-cet"),
+        pytest.param(utc(2026, 10, 25, 20, 59, 59), "peak", id="autumn-21:59:59-cet"),
+        pytest.param(utc(2026, 10, 25, 21), "off_peak", id="autumn-22:00-cet"),
+    ],
+)
+def test_current_period_tempo(
+    now: datetime, expected: str, ranges: tuple[OffPeakRange, ...]
+) -> None:
+    """Tempo off-peak hours are 22:00-06:00, whatever the ranges of the contract."""
+    assert current_period(TEMPO, now, ranges) is TariffPeriod(expected)
+
+
+def test_current_period_tempo_ignores_contract_ranges() -> None:
+    """The contract ranges, which HP/HC would follow, do not change Tempo periods."""
+    inverted = parse_off_peak_ranges("06:00-22:00")
+    for now in (paris(2026, 1, 15, 12), paris(2026, 1, 15, 23)):
+        assert current_period(HPHC, now, inverted) is not current_period(
+            TEMPO, now, inverted
+        )
+
+
+@pytest.mark.parametrize("ranges", IGNORED_RANGES)
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        pytest.param(paris(2026, 1, 15, 12), paris(2026, 1, 15, 22), id="noon"),
+        pytest.param(
+            paris(2026, 1, 15, 21, 59, 59),
+            paris(2026, 1, 15, 22),
+            id="just-before-22:00",
+        ),
+        pytest.param(paris(2026, 1, 15, 22), paris(2026, 1, 16, 6), id="on-22:00"),
+        pytest.param(paris(2026, 1, 15, 23, 30), paris(2026, 1, 16, 6), id="evening"),
+        pytest.param(
+            paris(2026, 1, 16), paris(2026, 1, 16, 6), id="midnight-is-not-a-change"
+        ),
+        pytest.param(
+            paris(2026, 1, 16, 5, 59, 59),
+            paris(2026, 1, 16, 6),
+            id="just-before-06:00",
+        ),
+        pytest.param(paris(2026, 1, 16, 6), paris(2026, 1, 16, 22), id="on-06:00"),
+        pytest.param(paris(2026, 12, 31, 23), paris(2027, 1, 1, 6), id="new-year"),
+        pytest.param(utc(2026, 7, 1, 12), utc(2026, 7, 1, 20), id="summer"),
+        pytest.param(
+            datetime(2026, 1, 15, 16, 30, tzinfo=NEW_YORK),
+            paris(2026, 1, 16, 6),
+            id="new-york",
+        ),
+        pytest.param(
+            utc(2026, 3, 28, 12),
+            utc(2026, 3, 28, 21),
+            id="spring-eve-13:00-cet-to-22:00-cet",
+        ),
+        pytest.param(
+            utc(2026, 3, 28, 21),
+            utc(2026, 3, 29, 4),
+            id="spring-22:00-cet-to-06:00-cest",
+        ),
+        pytest.param(
+            utc(2026, 3, 29, 0, 59, 59),
+            utc(2026, 3, 29, 4),
+            id="spring-01:59:59-cet-clock-change-is-not-a-change",
+        ),
+        pytest.param(
+            utc(2026, 3, 29, 1),
+            utc(2026, 3, 29, 4),
+            id="spring-03:00-cest-to-06:00-cest",
+        ),
+        pytest.param(
+            utc(2026, 3, 29, 4),
+            utc(2026, 3, 29, 20),
+            id="spring-06:00-cest-to-22:00-cest",
+        ),
+        pytest.param(
+            utc(2026, 10, 24, 12),
+            utc(2026, 10, 24, 20),
+            id="autumn-eve-14:00-cest-to-22:00-cest",
+        ),
+        pytest.param(
+            utc(2026, 10, 24, 20),
+            utc(2026, 10, 25, 5),
+            id="autumn-22:00-cest-to-06:00-cet",
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 0, 30),
+            utc(2026, 10, 25, 5),
+            id="autumn-02:30-cest-to-06:00-cet",
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 1, 30),
+            utc(2026, 10, 25, 5),
+            id="autumn-02:30-cet-to-06:00-cet",
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 5),
+            utc(2026, 10, 25, 21),
+            id="autumn-06:00-cet-to-22:00-cet",
+        ),
+    ],
+)
+def test_next_period_change_tempo(
+    now: datetime, expected: datetime, ranges: tuple[OffPeakRange, ...]
+) -> None:
+    """The Tempo period changes at 22:00 and 06:00, also on DST days."""
+    assert_paris_instant(next_period_change(TEMPO, now, ranges), expected)
+
+
+@pytest.mark.parametrize(
+    "day",
+    [SPRING_DAY, AUTUMN_DAY, date(2026, 6, 15)],
+    ids=["spring-day", "autumn-day", "summer-day"],
+)
+def test_tempo_period_matches_hphc_with_night_hours(day: date) -> None:
+    """Tempo behaves as HP/HC with 22:00-06:00, checked by the minute scan above."""
+    start = datetime.combine(day - timedelta(days=1), time(), tzinfo=UTC)
+    for index in range(0, 3 * 24 * 60, 7):
+        now = start + timedelta(minutes=index, seconds=(index % 3) * 20)
+        assert current_period(TEMPO, now, ()) is current_period(HPHC, now, NIGHT)
+        result = next_period_change(TEMPO, now, ())
+        expected = next_period_change(HPHC, now, NIGHT)
+        assert expected is not None
+        assert_paris_instant(result, expected)
+
+
+# Tempo day and color.
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        pytest.param(paris(2026, 1, 15, 5, 59, 59), date(2026, 1, 14), id="05:59:59"),
+        pytest.param(paris(2026, 1, 15, 6), date(2026, 1, 15), id="06:00"),
+        pytest.param(paris(2026, 1, 15, 12), date(2026, 1, 15), id="noon"),
+        pytest.param(
+            paris(2026, 1, 15, 23, 59, 59), date(2026, 1, 15), id="before-midnight"
+        ),
+        pytest.param(paris(2026, 1, 16), date(2026, 1, 15), id="midnight"),
+        pytest.param(paris(2026, 1, 16, 3), date(2026, 1, 15), id="night"),
+        pytest.param(paris(2026, 1, 1, 3), date(2025, 12, 31), id="new-year-night"),
+        pytest.param(paris(2026, 3, 1, 5), date(2026, 2, 28), id="month-change"),
+        pytest.param(
+            utc(2026, 1, 15, 4, 59, 59), date(2026, 1, 14), id="utc-winter-05:59:59"
+        ),
+        pytest.param(utc(2026, 1, 15, 5), date(2026, 1, 15), id="utc-winter-06:00"),
+        pytest.param(
+            utc(2026, 7, 1, 3, 59, 59), date(2026, 6, 30), id="utc-summer-05:59:59"
+        ),
+        pytest.param(utc(2026, 7, 1, 4), date(2026, 7, 1), id="utc-summer-06:00"),
+        pytest.param(
+            datetime(2026, 1, 15, 0, 30, tzinfo=NEW_YORK),
+            date(2026, 1, 15),
+            id="new-york",
+        ),
+        pytest.param(
+            datetime(2026, 1, 15, 6, 30, tzinfo=PLUS_FIVE),
+            date(2026, 1, 14),
+            id="fixed-offset",
+        ),
+        pytest.param(utc(2026, 3, 28, 23), date(2026, 3, 28), id="spring-00:00-cet"),
+        pytest.param(
+            utc(2026, 3, 29, 0, 59, 59), date(2026, 3, 28), id="spring-01:59:59-cet"
+        ),
+        pytest.param(utc(2026, 3, 29, 1), date(2026, 3, 28), id="spring-03:00-cest"),
+        pytest.param(
+            utc(2026, 3, 29, 3, 59, 59), date(2026, 3, 28), id="spring-05:59:59-cest"
+        ),
+        pytest.param(utc(2026, 3, 29, 4), date(2026, 3, 29), id="spring-06:00-cest"),
+        pytest.param(
+            utc(2026, 3, 30, 3, 59, 59),
+            date(2026, 3, 29),
+            id="spring-next-day-05:59:59-cest",
+        ),
+        pytest.param(
+            utc(2026, 3, 30, 4), date(2026, 3, 30), id="spring-next-day-06:00-cest"
+        ),
+        pytest.param(utc(2026, 10, 24, 22), date(2026, 10, 24), id="autumn-00:00-cest"),
+        pytest.param(
+            utc(2026, 10, 25, 0, 30), date(2026, 10, 24), id="autumn-02:30-cest"
+        ),
+        pytest.param(
+            paris(2026, 10, 25, 2, 30, fold=1),
+            date(2026, 10, 24),
+            id="autumn-02:30-cet",
+        ),
+        pytest.param(utc(2026, 10, 25, 4), date(2026, 10, 24), id="autumn-05:00-cet"),
+        pytest.param(
+            utc(2026, 10, 25, 4, 59, 59), date(2026, 10, 24), id="autumn-05:59:59-cet"
+        ),
+        pytest.param(utc(2026, 10, 25, 5), date(2026, 10, 25), id="autumn-06:00-cet"),
+        pytest.param(
+            utc(2026, 10, 26, 4, 59, 59),
+            date(2026, 10, 25),
+            id="autumn-next-day-05:59:59-cet",
+        ),
+        pytest.param(
+            utc(2026, 10, 26, 5), date(2026, 10, 26), id="autumn-next-day-06:00-cet"
+        ),
+    ],
+)
+def test_tempo_day(now: datetime, expected: date) -> None:
+    """A Tempo day runs from 06:00 to 06:00 the next day, in Paris wall-clock time."""
+    assert tempo_day(now) == expected
+
+
+@pytest.mark.parametrize(
+    "day",
+    [SPRING_DAY, AUTUMN_DAY, date(2026, 6, 15)],
+    ids=["spring-day", "autumn-day", "summer-day"],
+)
+def test_tempo_day_starts_when_off_peak_hours_end(day: date) -> None:
+    """The Tempo day changes exactly when Tempo off-peak hours end, by one day."""
+    start = datetime.combine(day - timedelta(days=1), time(), tzinfo=UTC)
+    instants = [start + timedelta(minutes=index) for index in range(3 * 24 * 60)]
+    changes = 0
+    for before, after in pairwise(instants):
+        day_changes = tempo_day(after) != tempo_day(before)
+        off_peak_ends = (
+            current_period(TEMPO, before, ()) is TariffPeriod.OFF_PEAK
+            and current_period(TEMPO, after, ()) is TariffPeriod.PEAK
+        )
+        assert day_changes is off_peak_ends
+        if day_changes:
+            changes += 1
+            assert tempo_day(after) == tempo_day(before) + timedelta(days=1)
+            assert after.astimezone(PARIS).time() == TEMPO_DAY_START
+    assert changes == 3
+
+
+COLORS = {
+    date(2026, 1, 14): BLUE,
+    date(2026, 1, 15): RED,
+    date(2026, 3, 28): WHITE,
+    date(2026, 3, 29): BLUE,
+    date(2026, 10, 24): RED,
+    date(2026, 10, 25): WHITE,
+}
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        pytest.param(paris(2026, 1, 14, 5, 59, 59), None, id="day-before-unknown"),
+        pytest.param(paris(2026, 1, 14, 6), BLUE, id="first-known-day"),
+        pytest.param(
+            paris(2026, 1, 15, 5, 59, 59), BLUE, id="before-06:00-the-day-before"
+        ),
+        pytest.param(paris(2026, 1, 15, 6), RED, id="from-06:00-the-day"),
+        pytest.param(paris(2026, 1, 15, 23), RED, id="evening"),
+        pytest.param(paris(2026, 1, 16, 5, 59, 59), RED, id="next-night"),
+        pytest.param(paris(2026, 1, 16, 6), None, id="next-day-unknown"),
+        pytest.param(utc(2026, 1, 15, 4, 30), BLUE, id="utc-05:30-cet"),
+        pytest.param(utc(2026, 3, 29, 3, 59, 59), WHITE, id="spring-05:59:59-cest"),
+        pytest.param(utc(2026, 3, 29, 4), BLUE, id="spring-06:00-cest"),
+        pytest.param(utc(2026, 10, 25, 4, 59, 59), RED, id="autumn-05:59:59-cet"),
+        pytest.param(utc(2026, 10, 25, 5), WHITE, id="autumn-06:00-cet"),
+    ],
+)
+def test_tempo_color(now: datetime, expected: TempoColor | None) -> None:
+    """The color in force is that of the Tempo day, or None if unknown."""
+    assert tempo_color(COLORS, now) is expected
+
+
+def test_tempo_color_without_colors() -> None:
+    """Without any known color, the color in force is unknown."""
+    assert tempo_color({}, paris(2026, 1, 15, 12)) is None
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        pytest.param(
+            paris(2026, 1, 15, 5, 59, 59), PriceKey.BLUE_OFF_PEAK, id="05:59:59"
+        ),
+        pytest.param(paris(2026, 1, 15, 6), PriceKey.RED_PEAK, id="06:00"),
+        pytest.param(paris(2026, 1, 15, 22), PriceKey.RED_OFF_PEAK, id="22:00"),
+        pytest.param(
+            paris(2026, 1, 16, 5, 59, 59), PriceKey.RED_OFF_PEAK, id="next-05:59:59"
+        ),
+        pytest.param(paris(2026, 1, 16, 6), None, id="next-06:00-unknown-color"),
+    ],
+)
+def test_tempo_price_key(now: datetime, expected: PriceKey | None) -> None:
+    """The Tempo price follows the period and the color of the Tempo day."""
+    period = current_period(TEMPO, now, ())
+    assert price_key(TEMPO, period, tempo_color(COLORS, now)) is expected
+
+
+# Tempo colors to ask.
+
+
+@pytest.mark.parametrize(
+    ("day", "expected"),
+    [
+        pytest.param(date(2026, 1, 16), utc(2026, 1, 15, 9, 30), id="winter"),
+        pytest.param(date(2026, 7, 2), utc(2026, 7, 1, 8, 30), id="summer"),
+        pytest.param(date(2026, 1, 1), utc(2025, 12, 31, 9, 30), id="new-year"),
+        pytest.param(date(2026, 3, 1), utc(2026, 2, 28, 9, 30), id="month-change"),
+        pytest.param(
+            date(2026, 3, 29), utc(2026, 3, 28, 9, 30), id="spring-day-on-eve-cet"
+        ),
+        pytest.param(
+            date(2026, 3, 30), utc(2026, 3, 29, 8, 30), id="on-spring-day-cest"
+        ),
+        pytest.param(
+            date(2026, 10, 25), utc(2026, 10, 24, 8, 30), id="autumn-day-on-eve-cest"
+        ),
+        pytest.param(
+            date(2026, 10, 26), utc(2026, 10, 25, 9, 30), id="on-autumn-day-cet"
+        ),
+    ],
+)
+def test_tempo_publication(day: date, expected: datetime) -> None:
+    """The color of a day may be known from 10:30 the day before, in Paris."""
+    result = tempo_publication(day)
+    assert_paris_instant(result, expected)
+    assert result.replace(tzinfo=None) == datetime.combine(
+        day - timedelta(days=1), time(10, 30)
+    )
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        pytest.param(paris(2026, 1, 15, 3), dates(2026, 1, 14, 15), id="night"),
+        pytest.param(paris(2026, 1, 15, 6), dates(2026, 1, 14, 15), id="06:00"),
+        pytest.param(
+            paris(2026, 1, 15, 10, 29, 59),
+            dates(2026, 1, 14, 15),
+            id="before-publication",
+        ),
+        pytest.param(
+            paris(2026, 1, 15, 10, 30),
+            dates(2026, 1, 14, 15, 16),
+            id="on-publication",
+        ),
+        pytest.param(
+            paris(2026, 1, 15, 23, 59, 59),
+            dates(2026, 1, 14, 15, 16),
+            id="before-midnight",
+        ),
+        pytest.param(paris(2026, 1, 16), dates(2026, 1, 15, 16), id="midnight"),
+        pytest.param(
+            paris(2026, 12, 31, 12),
+            (date(2026, 12, 30), date(2026, 12, 31), date(2027, 1, 1)),
+            id="new-year-eve",
+        ),
+        pytest.param(
+            paris(2027, 1, 1),
+            (date(2026, 12, 31), date(2027, 1, 1)),
+            id="new-year",
+        ),
+        pytest.param(
+            utc(2026, 1, 15, 9, 29, 59),
+            dates(2026, 1, 14, 15),
+            id="utc-winter-10:29:59",
+        ),
+        pytest.param(
+            utc(2026, 1, 15, 9, 30), dates(2026, 1, 14, 15, 16), id="utc-winter-10:30"
+        ),
+        pytest.param(
+            utc(2026, 7, 1, 8, 29, 59),
+            (date(2026, 6, 30), date(2026, 7, 1)),
+            id="utc-summer-10:29:59",
+        ),
+        pytest.param(
+            utc(2026, 7, 1, 8, 30),
+            (date(2026, 6, 30), date(2026, 7, 1), date(2026, 7, 2)),
+            id="utc-summer-10:30",
+        ),
+        pytest.param(
+            utc(2026, 6, 30, 22, 30),
+            (date(2026, 6, 30), date(2026, 7, 1)),
+            id="utc-is-the-day-before",
+        ),
+        pytest.param(
+            datetime(2026, 1, 14, 20, tzinfo=NEW_YORK),
+            dates(2026, 1, 14, 15),
+            id="new-york",
+        ),
+        pytest.param(
+            utc(2026, 3, 28, 9, 29, 59),
+            dates(2026, 3, 27, 28),
+            id="spring-eve-10:29:59-cet",
+        ),
+        pytest.param(
+            utc(2026, 3, 28, 9, 30),
+            dates(2026, 3, 27, 28, 29),
+            id="spring-eve-10:30-cet",
+        ),
+        pytest.param(
+            utc(2026, 3, 29, 1), dates(2026, 3, 28, 29), id="spring-03:00-cest"
+        ),
+        pytest.param(
+            utc(2026, 3, 29, 8, 29, 59),
+            dates(2026, 3, 28, 29),
+            id="spring-10:29:59-cest",
+        ),
+        pytest.param(
+            utc(2026, 3, 29, 8, 30),
+            dates(2026, 3, 28, 29, 30),
+            id="spring-10:30-cest",
+        ),
+        pytest.param(
+            utc(2026, 10, 24, 8, 29, 59),
+            dates(2026, 10, 23, 24),
+            id="autumn-eve-10:29:59-cest",
+        ),
+        pytest.param(
+            utc(2026, 10, 24, 8, 30),
+            dates(2026, 10, 23, 24, 25),
+            id="autumn-eve-10:30-cest",
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 1, 30), dates(2026, 10, 24, 25), id="autumn-02:30-cet"
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 8, 30), dates(2026, 10, 24, 25), id="autumn-09:30-cet"
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 9, 29, 59),
+            dates(2026, 10, 24, 25),
+            id="autumn-10:29:59-cet",
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 9, 30),
+            dates(2026, 10, 24, 25, 26),
+            id="autumn-10:30-cet",
+        ),
+    ],
+)
+def test_tempo_days_expected(now: datetime, expected: tuple[date, ...]) -> None:
+    """Yesterday and today are expected, and tomorrow from 10:30 today."""
+    assert tempo_days_expected(now) == expected
+
+
+NOON = paris(2026, 1, 15, 12)
+MORNING = paris(2026, 1, 15, 8)
+
+
+@pytest.mark.parametrize(
+    ("now", "known", "expected"),
+    [
+        pytest.param(NOON, (), dates(2026, 1, 14, 15, 16), id="none-known"),
+        pytest.param(NOON, dates(2026, 1, 14), dates(2026, 1, 15, 16), id="one-known"),
+        pytest.param(
+            NOON, dates(2026, 1, 14, 15), dates(2026, 1, 16), id="tomorrow-missing"
+        ),
+        pytest.param(
+            NOON, dates(2026, 1, 15, 16), dates(2026, 1, 14), id="yesterday-missing"
+        ),
+        pytest.param(
+            NOON, dates(2026, 1, 14, 16), dates(2026, 1, 15), id="today-missing"
+        ),
+        pytest.param(NOON, dates(2026, 1, 14, 15, 16), (), id="all-known"),
+        pytest.param(NOON, dates(2026, 1, 12, 13, 14, 15, 16, 17), (), id="more-known"),
+        pytest.param(
+            NOON, dates(2026, 1, 13, 17), dates(2026, 1, 14, 15, 16), id="others-known"
+        ),
+        pytest.param(
+            MORNING, dates(2026, 1, 14, 15), (), id="tomorrow-not-expected-yet"
+        ),
+        pytest.param(
+            MORNING, dates(2026, 1, 15), dates(2026, 1, 14), id="morning-yesterday"
+        ),
+        pytest.param(
+            paris(2026, 1, 16),
+            dates(2026, 1, 14, 15),
+            dates(2026, 1, 16),
+            id="midnight-today-missing",
+        ),
+    ],
+)
+def test_tempo_days_missing(
+    now: datetime, known: tuple[date, ...], expected: tuple[date, ...]
+) -> None:
+    """The missing days are the expected days without color, in date order."""
+    colors = dict.fromkeys(reversed(known), WHITE)
+    assert tempo_days_missing(now, colors) == expected
+
+
+@pytest.mark.parametrize(
+    ("now", "known", "expected"),
+    [
+        pytest.param(
+            NOON, dates(2026, 1, 14, 15), paris(2026, 1, 15, 12, 15), id="tomorrow"
+        ),
+        pytest.param(
+            MORNING, dates(2026, 1, 15), paris(2026, 1, 15, 8, 15), id="yesterday"
+        ),
+        pytest.param(MORNING, (), paris(2026, 1, 15, 8, 15), id="none-known"),
+        pytest.param(
+            paris(2026, 1, 15, 10, 30),
+            dates(2026, 1, 14, 15),
+            paris(2026, 1, 15, 10, 45),
+            id="tomorrow-on-publication",
+        ),
+        pytest.param(
+            paris(2026, 1, 15, 23, 50),
+            dates(2026, 1, 14, 15),
+            paris(2026, 1, 16, 0, 5),
+            id="across-midnight",
+        ),
+        pytest.param(
+            paris(2026, 1, 16),
+            dates(2026, 1, 14, 15),
+            paris(2026, 1, 16, 0, 15),
+            id="today-at-midnight",
+        ),
+        pytest.param(
+            utc(2026, 3, 29, 0, 50),
+            dates(2026, 3, 28),
+            utc(2026, 3, 29, 1, 5),
+            id="spring-01:50-cet-to-03:05-cest",
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 0, 50),
+            dates(2026, 10, 24),
+            utc(2026, 10, 25, 1, 5),
+            id="autumn-02:50-cest-to-02:05-cet",
+        ),
+        pytest.param(
+            paris(2026, 10, 25, 2, 50),
+            dates(2026, 10, 24),
+            utc(2026, 10, 25, 1, 5),
+            id="autumn-paris-02:50-cest-to-02:05-cet",
+        ),
+        pytest.param(
+            datetime(2026, 1, 15, 6, tzinfo=NEW_YORK),
+            dates(2026, 1, 14, 15),
+            utc(2026, 1, 15, 11, 15),
+            id="new-york",
+        ),
+    ],
+)
+def test_next_tempo_refresh_retry(
+    now: datetime, known: tuple[date, ...], expected: datetime
+) -> None:
+    """While an expected color is missing, the source is asked again soon."""
+    result = next_tempo_refresh(now, dict.fromkeys(known, BLUE))
+    assert_paris_instant(result, expected)
+    assert result.astimezone(UTC) - now.astimezone(UTC) == TEMPO_RETRY_INTERVAL
+
+
+@pytest.mark.parametrize(
+    ("now", "known", "expected"),
+    [
+        pytest.param(
+            MORNING, dates(2026, 1, 14, 15), paris(2026, 1, 15, 10, 30), id="morning"
+        ),
+        pytest.param(
+            paris(2026, 1, 15, 3),
+            dates(2026, 1, 14, 15),
+            paris(2026, 1, 15, 10, 30),
+            id="night",
+        ),
+        pytest.param(
+            paris(2026, 1, 15, 10, 29, 59),
+            dates(2026, 1, 14, 15),
+            paris(2026, 1, 15, 10, 30),
+            id="just-before-publication",
+        ),
+        pytest.param(
+            MORNING,
+            dates(2026, 1, 14, 15, 16),
+            paris(2026, 1, 15, 10, 30),
+            id="tomorrow-known-early",
+        ),
+        pytest.param(
+            paris(2026, 1, 15, 10, 30),
+            dates(2026, 1, 14, 15, 16),
+            paris(2026, 1, 16, 10, 30),
+            id="on-publication",
+        ),
+        pytest.param(
+            NOON,
+            dates(2026, 1, 14, 15, 16),
+            paris(2026, 1, 16, 10, 30),
+            id="afternoon",
+        ),
+        pytest.param(
+            paris(2026, 1, 15, 23, 59, 59),
+            dates(2026, 1, 14, 15, 16),
+            paris(2026, 1, 16, 10, 30),
+            id="before-midnight",
+        ),
+        pytest.param(
+            paris(2026, 1, 16),
+            dates(2026, 1, 15, 16),
+            paris(2026, 1, 16, 10, 30),
+            id="midnight",
+        ),
+        pytest.param(
+            paris(2026, 1, 16),
+            dates(2026, 1, 14, 15, 16),
+            paris(2026, 1, 16, 10, 30),
+            id="midnight-with-the-day-before",
+        ),
+        pytest.param(
+            paris(2026, 1, 16, 3),
+            dates(2026, 1, 15, 16),
+            paris(2026, 1, 16, 10, 30),
+            id="next-night",
+        ),
+        pytest.param(
+            paris(2026, 12, 31, 12),
+            (date(2026, 12, 30), date(2026, 12, 31), date(2027, 1, 1)),
+            paris(2027, 1, 1, 10, 30),
+            id="new-year",
+        ),
+        pytest.param(
+            utc(2026, 3, 28, 12),
+            dates(2026, 3, 27, 28, 29),
+            utc(2026, 3, 29, 8, 30),
+            id="spring-eve-to-10:30-cest",
+        ),
+        pytest.param(
+            utc(2026, 3, 29, 1),
+            dates(2026, 3, 28, 29),
+            utc(2026, 3, 29, 8, 30),
+            id="spring-03:00-cest-to-10:30-cest",
+        ),
+        pytest.param(
+            utc(2026, 10, 24, 12),
+            dates(2026, 10, 23, 24, 25),
+            utc(2026, 10, 25, 9, 30),
+            id="autumn-eve-to-10:30-cet",
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 1, 30),
+            dates(2026, 10, 24, 25),
+            utc(2026, 10, 25, 9, 30),
+            id="autumn-02:30-cet-to-10:30-cet",
+        ),
+        pytest.param(
+            utc(2026, 10, 25, 8, 30),
+            dates(2026, 10, 24, 25),
+            utc(2026, 10, 25, 9, 30),
+            id="autumn-09:30-cet-to-10:30-cet",
+        ),
+        pytest.param(
+            datetime(2026, 1, 14, 20, tzinfo=NEW_YORK),
+            dates(2026, 1, 14, 15),
+            paris(2026, 1, 15, 10, 30),
+            id="new-york",
+        ),
+    ],
+)
+def test_next_tempo_refresh_all_known(
+    now: datetime, known: tuple[date, ...], expected: datetime
+) -> None:
+    """With every expected color known, ask again when a new day is expected."""
+    result = next_tempo_refresh(now, dict.fromkeys(known, RED))
+    assert_paris_instant(result, expected)
+    assert result > now
+
+
+@pytest.mark.parametrize(
+    "day",
+    [SPRING_DAY, AUTUMN_DAY, date(2026, 6, 15)],
+    ids=["spring-day", "autumn-day", "summer-day"],
+)
+def test_next_tempo_refresh_matches_a_minute_scan(day: date) -> None:
+    """With the expected colors known, the refresh is when a new day is expected.
+
+    The expected days only change on whole minutes: the reference scans the
+    minutes in UTC for the first one that expects a day without color.
+    """
+    start = datetime.combine(day - timedelta(days=1), time(), tzinfo=UTC)
+    minutes = 4 * 24 * 60  # Two days of samples, two more to see the refresh.
+    expected_days = [
+        tempo_days_expected(start + timedelta(minutes=index))
+        for index in range(minutes)
+    ]
+    for index in range(0, 2 * 24 * 60, 11):
+        now = start + timedelta(minutes=index, seconds=(index % 3) * 20)
+        colors = dict.fromkeys(expected_days[index], BLUE)
+        assert tempo_days_missing(now, colors) == ()
+        later = next(
+            later
+            for later in range(index + 1, minutes)
+            if not colors.keys() >= set(expected_days[later])
+        )
+        result = next_tempo_refresh(now, colors)
+        assert_paris_instant(result, start + timedelta(minutes=later))
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        pytest.param(tempo_day, id="tempo-day"),
+        pytest.param(lambda now: tempo_color(COLORS, now), id="tempo-color"),
+        pytest.param(tempo_days_expected, id="tempo-days-expected"),
+        pytest.param(lambda now: tempo_days_missing(now, {}), id="tempo-days-missing"),
+        pytest.param(
+            lambda now: next_tempo_refresh(now, COLORS), id="next-tempo-refresh"
+        ),
+    ],
+)
+def test_tempo_naive_datetime(rule: Callable[[datetime], object]) -> None:
+    """A naive datetime is rejected by every Tempo rule."""
+    with pytest.raises(ValueError, match="timezone-aware"):
+        rule(datetime(2026, 1, 15, 12))

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Mapping
+from datetime import date, datetime
 from decimal import Decimal
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
@@ -26,10 +27,12 @@ from .const import (
 )
 from .models import (
     OffPeakRange,
+    PriceKey,
     TariffGrid,
     TariffOption,
     TariffPeriod,
     TariffRow,
+    TempoColor,
     grid_from_dict,
     grid_to_dict,
 )
@@ -40,8 +43,13 @@ from .pricing import (
     next_midnight,
     next_period_change,
     parse_off_peak_ranges,
+    price_key,
     row_in_force,
+    tempo_color,
 )
+
+if TYPE_CHECKING:
+    from .tempo import TempoColorsCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,6 +86,7 @@ class TrveEdfCoordinator(DataUpdateCoordinator[TariffGrid]):
         if self.option is TariffOption.HPHC:
             self.off_peak = parse_off_peak_ranges(entry.options[CONF_OFF_PEAK_HOURS])
         self.grid_downloaded_at: datetime | None = None
+        self.tempo: TempoColorsCoordinator | None = None
         self._store: Store[dict[str, Any]] = Store(
             hass, STORAGE_VERSION, f"{DOMAIN}.grid_{self.option}"
         )
@@ -151,6 +160,36 @@ class TrveEdfCoordinator(DataUpdateCoordinator[TariffGrid]):
         """Return the tariff period at a moment."""
         return current_period(self.option, now, self.off_peak)
 
+    def price_key(self, now: datetime) -> PriceKey | None:
+        """Return the key of the price of the kWh in force at a moment.
+
+        For Tempo, it depends on the color of the Tempo day: None while unknown.
+        """
+        color = self.tempo_color(now) if self.option is TariffOption.TEMPO else None
+        return price_key(self.option, self.period(now), color)
+
+    @callback
+    def async_attach_tempo(self, tempo: TempoColorsCoordinator) -> None:
+        """Follow the shared Tempo colors: notify the entities when they change."""
+        self.tempo = tempo
+        self.config_entry.async_on_unload(
+            tempo.async_add_listener(self.async_update_listeners)
+        )
+
+    def tempo_colors(self) -> Mapping[date, TempoColor]:
+        """Return the known Tempo colors."""
+        if self.tempo is None or self.tempo.data is None:
+            return {}
+        return self.tempo.data
+
+    def tempo_color(self, now: datetime) -> TempoColor | None:
+        """Return the color of the Tempo day in force at a moment (06:00-06:00)."""
+        return tempo_color(self.tempo_colors(), now)
+
+    def tempo_color_of_day(self, day: date) -> TempoColor | None:
+        """Return the color of the Tempo day starting at 06:00 on a date."""
+        return self.tempo_colors().get(day)
+
     def next_change(self, now: datetime) -> datetime | None:
         """Return the next change of tariff period after a moment."""
         return next_period_change(self.option, now, self.off_peak)
@@ -171,7 +210,9 @@ class TrveEdfCoordinator(DataUpdateCoordinator[TariffGrid]):
 
     def _price(self, moment: datetime) -> Decimal | None:
         row = row_in_force(self.data, moment.astimezone(PARIS).date(), self.power_kva)
-        return None if row is None else current_price(row, self.period(moment))
+        if row is None or (key := self.price_key(moment)) is None:
+            return None
+        return current_price(row, key)
 
     @callback
     def async_start_clock(self) -> None:

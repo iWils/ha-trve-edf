@@ -50,7 +50,8 @@
     "option": {
       "options": {
         "base": "Base",
-        "hphc": "Heures pleines / heures creuses (HP/HC)"
+        "hphc": "Heures pleines / heures creuses (HP/HC)",
+        "tempo": "Tempo"
       }
     }
   },
@@ -81,6 +82,56 @@
       },
       "off_peak_price": {
         "name": "Prix heures creuses"
+      },
+      "blue_peak_price": {
+        "name": "Prix jour bleu heures pleines"
+      },
+      "blue_off_peak_price": {
+        "name": "Prix jour bleu heures creuses"
+      },
+      "white_peak_price": {
+        "name": "Prix jour blanc heures pleines"
+      },
+      "white_off_peak_price": {
+        "name": "Prix jour blanc heures creuses"
+      },
+      "red_peak_price": {
+        "name": "Prix jour rouge heures pleines"
+      },
+      "red_off_peak_price": {
+        "name": "Prix jour rouge heures creuses"
+      },
+      "tempo_color": {
+        "name": "Couleur Tempo en cours",
+        "state": {
+          "blue": "Bleu",
+          "white": "Blanc",
+          "red": "Rouge"
+        }
+      },
+      "tempo_color_yesterday": {
+        "name": "Couleur Tempo d'hier",
+        "state": {
+          "blue": "Bleu",
+          "white": "Blanc",
+          "red": "Rouge"
+        }
+      },
+      "tempo_color_today": {
+        "name": "Couleur Tempo d'aujourd'hui",
+        "state": {
+          "blue": "Bleu",
+          "white": "Blanc",
+          "red": "Rouge"
+        }
+      },
+      "tempo_color_tomorrow": {
+        "name": "Couleur Tempo de demain",
+        "state": {
+          "blue": "Bleu",
+          "white": "Blanc",
+          "red": "Rouge"
+        }
       }
     }
   }

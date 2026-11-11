@@ -50,7 +50,8 @@
     "option": {
       "options": {
         "base": "Base",
-        "hphc": "Peak / off-peak hours (HP/HC)"
+        "hphc": "Peak / off-peak hours (HP/HC)",
+        "tempo": "Tempo"
       }
     }
   },
@@ -81,6 +82,56 @@
       },
       "off_peak_price": {
         "name": "Off-peak hours price"
+      },
+      "blue_peak_price": {
+        "name": "Blue day peak hours price"
+      },
+      "blue_off_peak_price": {
+        "name": "Blue day off-peak hours price"
+      },
+      "white_peak_price": {
+        "name": "White day peak hours price"
+      },
+      "white_off_peak_price": {
+        "name": "White day off-peak hours price"
+      },
+      "red_peak_price": {
+        "name": "Red day peak hours price"
+      },
+      "red_off_peak_price": {
+        "name": "Red day off-peak hours price"
+      },
+      "tempo_color": {
+        "name": "Current Tempo color",
+        "state": {
+          "blue": "Blue",
+          "white": "White",
+          "red": "Red"
+        }
+      },
+      "tempo_color_yesterday": {
+        "name": "Yesterday's Tempo color",
+        "state": {
+          "blue": "Blue",
+          "white": "White",
+          "red": "Red"
+        }
+      },
+      "tempo_color_today": {
+        "name": "Today's Tempo color",
+        "state": {
+          "blue": "Blue",
+          "white": "White",
+          "red": "Red"
+        }
+      },
+      "tempo_color_tomorrow": {
+        "name": "Tomorrow's Tempo color",
+        "state": {
+          "blue": "Blue",
+          "white": "White",
+          "red": "Red"
+        }
       }
     }
   }

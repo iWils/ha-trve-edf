@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
+The Tempo option.
+
+### Added
+- Tempo contracts: subscribed power among those in force in the CRE Tempo grid; the
+  off-peak hours are fixed nationally (22:00-06:00), nothing to enter.
+- Tempo sensors: the 6 prices (blue, white, red, in peak and off-peak hours), the
+  color of the current Tempo day (06:00 to 06:00) and the colors of yesterday, today
+  and tomorrow. The current price, current period and next price change also cover
+  Tempo.
+- Accuracy first for Tempo: the current price and the current color are unavailable
+  while the color of the current Tempo day is unknown; yesterday's and today's colors
+  are unavailable when missing, tomorrow's is "unknown" until published.
+- Tempo colors from Jour Tempo (RTE data redistributed as open data), completed by a
+  fallback source when it fails or lacks a day. Only missing colors are asked for:
+  yesterday, today and, from 10:30 the day before, tomorrow, every 15 minutes while
+  one is missing. Known colors are saved, shared by all the Tempo contracts, shown
+  at once on startup and never asked again; the setup never waits for the network.
+
 ## [0.1.0] - 2026-11-11
 
 First version: the Base and HP/HC options of the EDF regulated tariffs (TRVE).
@@ -38,5 +58,6 @@ Tempo comes with 0.2.0.
 - Continuous integration (ruff, strict mypy, tests with coverage, hassfest, HACS
   Action) and automated releases.
 
-[Unreleased]: https://github.com/iWils/ha-trve-edf/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/iWils/ha-trve-edf/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/iWils/ha-trve-edf/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/iWils/ha-trve-edf/releases/tag/0.1.0
