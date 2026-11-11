@@ -2,11 +2,86 @@
   "config": {
     "step": {
       "user": {
-        "description": "Configurez un contrat aux tarifs réglementés EDF (TRVE)."
+        "title": "Option tarifaire",
+        "description": "Choisissez l'option de votre contrat aux tarifs réglementés EDF (TRVE).",
+        "data": {
+          "option": "Option"
+        }
+      },
+      "power": {
+        "title": "Puissance souscrite",
+        "description": "Choisissez la puissance souscrite de votre contrat, parmi celles actuellement proposées pour cette option.",
+        "data": {
+          "power_kva": "Puissance souscrite"
+        }
+      },
+      "off_peak": {
+        "title": "Heures creuses",
+        "description": "Saisissez les heures creuses de votre contrat, telles qu'indiquées sur votre facture, par exemple {example}. Séparez plusieurs plages par des virgules.",
+        "data": {
+          "off_peak_hours": "Heures creuses"
+        }
       }
     },
+    "error": {
+      "invalid_off_peak_hours": "Heures creuses invalides : utilisez des plages HH:MM-HH:MM séparées par des virgules, sans chevauchement.",
+      "cannot_connect": "Impossible de télécharger la grille des tarifs réglementés. Réessayez plus tard.",
+      "invalid_data": "La grille des tarifs réglementés téléchargée est invalide. Réessayez plus tard."
+    },
     "abort": {
-      "not_available_yet": "Cette intégration est en cours de développement : la configuration des contrats n'est pas encore disponible."
+      "no_power_available": "Aucune puissance souscrite n'est actuellement proposée pour cette option."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heures creuses",
+        "description": "Saisissez les heures creuses de votre contrat, telles qu'indiquées sur votre facture, par exemple {example}. Séparez plusieurs plages par des virgules.",
+        "data": {
+          "off_peak_hours": "Heures creuses"
+        }
+      }
+    },
+    "error": {
+      "invalid_off_peak_hours": "Heures creuses invalides : utilisez des plages HH:MM-HH:MM séparées par des virgules, sans chevauchement."
+    }
+  },
+  "selector": {
+    "option": {
+      "options": {
+        "base": "Base",
+        "hphc": "Heures pleines / heures creuses (HP/HC)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_price": {
+        "name": "Prix actuel"
+      },
+      "current_period": {
+        "name": "Période tarifaire actuelle",
+        "state": {
+          "base": "Base",
+          "peak": "Heures pleines",
+          "off_peak": "Heures creuses"
+        }
+      },
+      "next_price_change": {
+        "name": "Prochain changement de prix"
+      },
+      "subscription": {
+        "name": "Abonnement annuel"
+      },
+      "base_price": {
+        "name": "Prix Base"
+      },
+      "peak_price": {
+        "name": "Prix heures pleines"
+      },
+      "off_peak_price": {
+        "name": "Prix heures creuses"
+      }
     }
   }
 }

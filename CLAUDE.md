@@ -31,7 +31,9 @@ from official open data (CRE prices, RTE Tempo colors).
 - Business rules live in `pricing.py`, with no Home Assistant import, and are fully
   unit-tested.
 - Network access only in `api.py`, through Home Assistant's shared aiohttp session,
-  always with a timeout. Never keep an invalid response.
+  always with a timeout. Never keep an invalid response: a grid with an invalid row
+  that can still apply is rejected; invalid rows that ended before the download day
+  are skipped and logged.
 - Accuracy first: when a price cannot be known for sure (unknown Tempo color,
   missing tariff row), the entity is unavailable instead of showing a wrong value.
 - All time rules use `Europe/Paris`, whatever the system time zone.

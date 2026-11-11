@@ -1,21 +1,36 @@
-"""The EDF regulated tariffs (TRVE) integration.
-
-This is the scaffold of the integration: setting up an entry does nothing yet.
-The data sources, the tariff rules and the entities come in the next versions,
-as described in docs/cahier-des-charges.md.
-"""
+"""The EDF regulated tariffs (TRVE) integration."""
 
 from __future__ import annotations
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
+from .coordinator import TrveEdfConfigEntry, TrveEdfCoordinator
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+PLATFORMS: list[Platform] = [Platform.SENSOR]
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: TrveEdfConfigEntry) -> bool:
     """Set up a TRVE contract from a config entry."""
+    coordinator = TrveEdfCoordinator(hass, entry)
+    await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = coordinator
+
+    coordinator.async_start_clock()
+    entry.async_on_unload(coordinator.async_stop_clock)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: TrveEdfConfigEntry) -> bool:
     """Unload a config entry."""
-    return True
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def _async_update_listener(
+    hass: HomeAssistant, entry: TrveEdfConfigEntry
+) -> None:
+    """Reload the entry when its options change."""
+    await hass.config_entries.async_reload(entry.entry_id)

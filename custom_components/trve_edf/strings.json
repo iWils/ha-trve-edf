@@ -2,11 +2,86 @@
   "config": {
     "step": {
       "user": {
-        "description": "Set up an EDF regulated tariff (TRVE) contract."
+        "title": "Tariff option",
+        "description": "Choose the option of your EDF regulated tariff (TRVE) contract.",
+        "data": {
+          "option": "Option"
+        }
+      },
+      "power": {
+        "title": "Subscribed power",
+        "description": "Choose the subscribed power of your contract, among those currently offered for this option.",
+        "data": {
+          "power_kva": "Subscribed power"
+        }
+      },
+      "off_peak": {
+        "title": "Off-peak hours",
+        "description": "Enter the off-peak hours of your contract, as written on your bill, for example {example}. Separate several ranges with commas.",
+        "data": {
+          "off_peak_hours": "Off-peak hours"
+        }
       }
     },
+    "error": {
+      "invalid_off_peak_hours": "Invalid off-peak hours: use HH:MM-HH:MM ranges separated by commas, without overlap.",
+      "cannot_connect": "Cannot download the regulated tariffs grid. Try again later.",
+      "invalid_data": "The downloaded regulated tariffs grid is invalid. Try again later."
+    },
     "abort": {
-      "not_available_yet": "This integration is under development: contracts cannot be configured yet."
+      "no_power_available": "No subscribed power is currently offered for this option."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Off-peak hours",
+        "description": "Enter the off-peak hours of your contract, as written on your bill, for example {example}. Separate several ranges with commas.",
+        "data": {
+          "off_peak_hours": "Off-peak hours"
+        }
+      }
+    },
+    "error": {
+      "invalid_off_peak_hours": "Invalid off-peak hours: use HH:MM-HH:MM ranges separated by commas, without overlap."
+    }
+  },
+  "selector": {
+    "option": {
+      "options": {
+        "base": "Base",
+        "hphc": "Peak / off-peak hours (HP/HC)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_price": {
+        "name": "Current price"
+      },
+      "current_period": {
+        "name": "Current tariff period",
+        "state": {
+          "base": "Base",
+          "peak": "Peak hours",
+          "off_peak": "Off-peak hours"
+        }
+      },
+      "next_price_change": {
+        "name": "Next price change"
+      },
+      "subscription": {
+        "name": "Yearly subscription"
+      },
+      "base_price": {
+        "name": "Base price"
+      },
+      "peak_price": {
+        "name": "Peak hours price"
+      },
+      "off_peak_price": {
+        "name": "Off-peak hours price"
+      }
     }
   }
 }

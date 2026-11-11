@@ -86,6 +86,10 @@ une sans toucher au reste.
   - Tempo : `PART_VARIABLE_{HC|HP}{Bleu|Blanc|Rouge}_*`.
 - Les colonnes sont lues **par leur nom** (ligne d'en-tête), jamais par leur
   position. Seuls les montants **TTC** sont exposés.
+- Une ligne invalide qui peut encore s'appliquer (sans date de fin, ou dont la date
+  de fin n'est pas passée ou est illisible) fait rejeter toute la grille. Une ligne
+  invalide terminée avant le jour du téléchargement ne peut fausser aucun prix : elle
+  est ignorée et signalée dans le journal.
 - La ligne applicable est celle dont la période de validité contient la date du
   jour : `DATE_DEBUT` ≤ aujourd'hui et (`DATE_FIN` vide ou ≥ aujourd'hui). Une grille
   publiée à l'avance s'applique donc toute seule le jour venu.
@@ -162,7 +166,9 @@ fondés sur l'entrée de configuration.
 
 ### 6.3 Mises à jour
 
-- **Grille tarifaire** : au démarrage, puis une fois par jour.
+- **Grille tarifaire** : au démarrage, puis une fois par jour. Elle est enregistrée et
+  partagée par les contrats de la même option : une grille enregistrée depuis moins
+  d'un jour est réutilisée sans nouveau téléchargement.
 - **Couleurs Tempo** : au démarrage, au changement de jour, puis à partir de
   l'heure de publication, à intervalle espacé, jusqu'à obtenir la couleur du
   lendemain. Une couleur connue n'est plus jamais redemandée.
@@ -174,7 +180,9 @@ fondés sur l'entrée de configuration.
 
 - Délais d'attente sur toutes les requêtes ; une réponse invalide n'est jamais
   conservée.
-- En cas de panne passagère, les dernières données valides restent utilisées.
+- En cas de panne passagère, les dernières données valides restent utilisées, y
+  compris après un redémarrage, pendant 7 jours au plus après leur téléchargement :
+  au-delà, les prix deviennent indisponibles (principe 2).
 - Si la puissance configurée disparaît de la grille, l'intégration le signale
   clairement (notification de réparation) au lieu d'échouer en boucle.
 - Téléchargement des diagnostics possible depuis l'interface.
