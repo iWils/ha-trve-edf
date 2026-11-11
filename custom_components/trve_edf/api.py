@@ -639,8 +639,7 @@ def _read_history_colors(
             continue  # Another day, or a color not published yet.
         if (color := _HISTORY_COLORS.get(color_text.lower())) is None:
             raise TempoDataError(
-                f"{line}: unknown {_HISTORY_COLOR} of {day.isoformat()}: "
-                f"{color_text!r}"
+                f"{line}: unknown {_HISTORY_COLOR} of {day.isoformat()}: {color_text!r}"
             )
         if colors.setdefault(day, color) != color:
             raise TempoDataError(

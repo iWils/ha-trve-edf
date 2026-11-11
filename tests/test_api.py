@@ -8,10 +8,11 @@ from datetime import date
 from decimal import Decimal
 from http import HTTPStatus
 import io
+import json
 import logging
 from pathlib import Path
 import re
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -669,7 +670,11 @@ def test_missing_column(option: TariffOption, column: str) -> None:
         (TariffOption.BASE, HPHC_FIXTURE, "PART_VARIABLE_TTC"),
         (TariffOption.BASE, TEMPO_FIXTURE, "PART_VARIABLE_TTC"),
         (TariffOption.HPHC, BASE_FIXTURE, "PART_VARIABLE_HP_TTC, PART_VARIABLE_HC_TTC"),
-        (TariffOption.HPHC, TEMPO_FIXTURE, "PART_VARIABLE_HP_TTC, PART_VARIABLE_HC_TTC"),
+        (
+            TariffOption.HPHC,
+            TEMPO_FIXTURE,
+            "PART_VARIABLE_HP_TTC, PART_VARIABLE_HC_TTC",
+        ),
         (TariffOption.TEMPO, BASE_FIXTURE, ", ".join(TEMPO_PRICE_COLUMNS)),
         (TariffOption.TEMPO, HPHC_FIXTURE, ", ".join(TEMPO_PRICE_COLUMNS)),
     ],
@@ -1511,7 +1516,7 @@ def test_parse_history_spaces_and_case() -> None:
     """Spaces around names and values, and the case of the colors, are ignored."""
     text = history_text(
         " 2026-01-09 , Blanc ,2025-2026",
-        '2026-01-10,\t"ROUGE"  ,2025-2026',
+        '2026-01-10, "ROUGE"  ,2025-2026',
         "2026-11-11 ,bLeU, 2026-2027",
         header=" date ,\tcouleur ,saison ",
     )
@@ -1764,8 +1769,15 @@ async def test_fetch_tempo_colors_request_options(
         await async_fetch_tempo_colors(session, [TODAY])
 
     assert get.call_args_list == [
-        call(session, JOUR_TEMPO_HISTORY_URL, timeout=REQUEST_TIMEOUT, allow_redirects=True),
-        call(session, fallback_url(TODAY), timeout=REQUEST_TIMEOUT, allow_redirects=True),
+        call(
+            session,
+            JOUR_TEMPO_HISTORY_URL,
+            timeout=REQUEST_TIMEOUT,
+            allow_redirects=True,
+        ),
+        call(
+            session, fallback_url(TODAY), timeout=REQUEST_TIMEOUT, allow_redirects=True
+        ),
     ]
 
 
@@ -1835,3 +1847,454 @@ async def test_fetch_tempo_colors_duplicate_days(
 
     assert colors == KNOWN_COLORS
     assert aioclient_mock.call_count == 1
+
+
+# Tempo colors: fallback source.
+
+PRIMARY_CONNECTION_ERRORS = [
+    pytest.param(
+        {"status": HTTPStatus.NOT_FOUND},
+        "The Jour Tempo history could not be downloaded: HTTP status 404",
+        id="HTTP 404",
+    ),
+    pytest.param(
+        {
+            "status": HTTPStatus.INTERNAL_SERVER_ERROR,
+            "content": (FIXTURES / HISTORY_FIXTURE).read_bytes(),
+        },
+        "The Jour Tempo history could not be downloaded: HTTP status 500",
+        id="HTTP 500 with a valid body",
+    ),
+    pytest.param(
+        {"exc": aiohttp.ClientConnectionError("Connection refused")},
+        "The Jour Tempo history could not be downloaded: Connection refused",
+        id="connection",
+    ),
+    pytest.param(
+        {"exc": TimeoutError()},
+        "The Jour Tempo history could not be downloaded: TimeoutError",
+        id="timeout",
+    ),
+    pytest.param(
+        {"content": (FIXTURES / HISTORY_FIXTURE).read_bytes(), "closing": True},
+        "The Jour Tempo history could not be downloaded: Connection closed",
+        id="connection lost while reading",
+    ),
+]
+"""Mocked answers of the history that are connection errors, with the error."""
+
+PRIMARY_DATA_ERRORS = [
+    pytest.param(b"", "The Jour Tempo history is empty", id="empty"),
+    pytest.param(
+        b"<!DOCTYPE html><html><body>Maintenance</body></html>",
+        "The Jour Tempo history lacks the required columns: date, couleur",
+        id="HTML page",
+    ),
+    pytest.param(
+        history_text("2026-11-11,violet,2026-2027").encode(),
+        "Line 2 of the Jour Tempo history: unknown couleur of 2026-11-11: 'violet'",
+        id="unknown color",
+    ),
+    pytest.param(
+        history_text("2026-11-10,bleu,2026-2027", "2026-11-1").encode(),
+        "Line 3 of the Jour Tempo history: date is not a valid date: '2026-11-1'",
+        id="truncated file",
+    ),
+    pytest.param(
+        history_text("2026-11-11,bleu,2026-2027").encode() + b"\x81\n",
+        "The Jour Tempo history is neither UTF-8 nor Windows-1252 text",
+        id="undecodable",
+    ),
+]
+"""Bodies of the history that are invalid, with the error."""
+
+
+@pytest.mark.parametrize(("answer", "reason"), PRIMARY_CONNECTION_ERRORS)
+async def test_fallback_on_primary_connection_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    answer: dict[str, object],
+    reason: str,
+) -> None:
+    """When the history cannot be downloaded, each day is asked to the fallback."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, **answer)
+    mock_fallback(aioclient_mock)
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert colors == KNOWN_COLORS
+    assert requested_urls(aioclient_mock) == [
+        JOUR_TEMPO_HISTORY_URL,
+        *(fallback_url(day) for day in DAYS),
+    ]
+    assert warnings(caplog) == [f"{reason}; using api-couleur-tempo.fr instead"]
+
+
+@pytest.mark.parametrize(("content", "reason"), PRIMARY_DATA_ERRORS)
+async def test_fallback_on_primary_data_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    content: bytes,
+    reason: str,
+) -> None:
+    """When the history is invalid, none of it is kept: the fallback is used."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, content=content)
+    mock_fallback(aioclient_mock)
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert colors == KNOWN_COLORS
+    assert aioclient_mock.call_count == 1 + len(DAYS)
+    assert warnings(caplog) == [f"{reason}; using api-couleur-tempo.fr instead"]
+
+
+@pytest.mark.parametrize(
+    ("day", "code", "expected"),
+    [
+        pytest.param(TOMORROW, 0, {}, id="0 not known yet"),
+        pytest.param(TODAY, 1, {TODAY: TempoColor.BLUE}, id="1 blue"),
+        pytest.param(WHITE_DAY, 2, {WHITE_DAY: TempoColor.WHITE}, id="2 white"),
+        pytest.param(RED_DAY, 3, {RED_DAY: TempoColor.RED}, id="3 red"),
+    ],
+)
+async def test_fallback_codes(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    day: date,
+    code: int,
+    expected: dict[date, TempoColor],
+) -> None:
+    """Each day code of the fallback source gives its color, 0 none."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, status=HTTPStatus.BAD_GATEWAY)
+    mock_fallback(aioclient_mock, {day: code})
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), [day])
+
+    assert colors == expected
+
+
+async def test_fallback_duplicate_days(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A day requested twice is asked once to the fallback source."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, status=HTTPStatus.BAD_GATEWAY)
+    mock_fallback(aioclient_mock)
+
+    colors = await async_fetch_tempo_colors(
+        async_get_clientsession(hass), [TODAY, YESTERDAY, TODAY]
+    )
+
+    assert colors == KNOWN_COLORS
+    assert requested_urls(aioclient_mock) == [
+        JOUR_TEMPO_HISTORY_URL,
+        fallback_url(TODAY),
+        fallback_url(YESTERDAY),
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(
+            b"\xef\xbb\xbf" + json.dumps(fallback_answer(TODAY, 1)).encode(), id="BOM"
+        ),
+        pytest.param(
+            json.dumps(
+                fallback_answer(TODAY, 1) | {"autre": "Été"}, ensure_ascii=False
+            ).encode(),
+            id="UTF-8",
+        ),
+        pytest.param(
+            json.dumps({"codeJour": 1, "dateJour": "2026-11-11"}).encode(),
+            id="other order, nothing else",
+        ),
+        pytest.param(
+            b' {\n  "dateJour" : "2026-11-11",\n  "codeJour" : 1\n}\n ',
+            id="spaces",
+        ),
+    ],
+)
+async def test_fallback_valid_bodies(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, content: bytes
+) -> None:
+    """Any JSON object with the date and the code of the day is valid."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, status=HTTPStatus.BAD_GATEWAY)
+    aioclient_mock.get(fallback_url(TODAY), content=content)
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), [TODAY])
+
+    assert colors == {TODAY: TempoColor.BLUE}
+
+
+INVALID_FALLBACK_BODIES = [
+    pytest.param(b"", "is not valid JSON: ", id="empty"),
+    pytest.param(b"<html></html>", "is not valid JSON: ", id="HTML page"),
+    pytest.param(
+        b'{"dateJour": "2026-11-11", "codeJour": 1',
+        "is not valid JSON: ",
+        id="truncated",
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11", "codeJour": 1, "x": "\xe9"}',
+        "is not valid JSON: ",
+        id="not UTF-8",
+    ),
+    pytest.param(b"[1]", "is not a JSON object", id="list"),
+    pytest.param(b"1", "is not a JSON object", id="number"),
+    pytest.param(b"null", "is not a JSON object", id="null"),
+    pytest.param(
+        b'{"dateJour": "2026-11-10", "codeJour": 1}',
+        "is for another day: dateJour is '2026-11-10'",
+        id="another day",
+    ),
+    pytest.param(
+        b'{"dateJour": "11/11/2026", "codeJour": 1}',
+        "is for another day: dateJour is '11/11/2026'",
+        id="other date format",
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11T00:00:00", "codeJour": 1}',
+        "is for another day: dateJour is '2026-11-11T00:00:00'",
+        id="date and time",
+    ),
+    pytest.param(
+        b'{"codeJour": 1}', "is for another day: dateJour is None", id="no date"
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11"}', "has an invalid codeJour: None", id="no code"
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11", "codeJour": null}',
+        "has an invalid codeJour: None",
+        id="null code",
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11", "codeJour": "1"}',
+        "has an invalid codeJour: '1'",
+        id="text code",
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11", "codeJour": 1.0}',
+        "has an invalid codeJour: 1.0",
+        id="decimal code",
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11", "codeJour": true}',
+        "has an invalid codeJour: True",
+        id="boolean code",
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11", "codeJour": [1]}',
+        "has an invalid codeJour: [1]",
+        id="list code",
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11", "codeJour": 4}',
+        "has an invalid codeJour: 4",
+        id="code 4",
+    ),
+    pytest.param(
+        b'{"dateJour": "2026-11-11", "codeJour": -1}',
+        "has an invalid codeJour: -1",
+        id="negative code",
+    ),
+]
+"""Invalid bodies of the fallback source for TODAY, with the error."""
+
+
+@pytest.mark.parametrize(("content", "message"), INVALID_FALLBACK_BODIES)
+async def test_fallback_invalid_body(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    content: bytes,
+    message: str,
+) -> None:
+    """An invalid answer of the fallback source is invalid data."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, status=HTTPStatus.BAD_GATEWAY)
+    aioclient_mock.get(fallback_url(TODAY), content=content)
+
+    with pytest.raises(
+        TempoDataError,
+        match=rf"^The Tempo color of 2026-11-11 from api-couleur-tempo\.fr "
+        rf"{re.escape(message)}",
+    ):
+        await async_fetch_tempo_colors(async_get_clientsession(hass), [TODAY])
+
+    assert len(warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [
+        pytest.param(
+            {"status": HTTPStatus.BAD_REQUEST, "json": fallback_answer(TODAY, 1)},
+            "HTTP status 400",
+            id="HTTP 400 with a valid body",
+        ),
+        pytest.param(
+            {"status": HTTPStatus.NOT_FOUND}, "HTTP status 404", id="HTTP 404"
+        ),
+        pytest.param(
+            {"status": HTTPStatus.TOO_MANY_REQUESTS}, "HTTP status 429", id="HTTP 429"
+        ),
+        pytest.param(
+            {"status": HTTPStatus.SERVICE_UNAVAILABLE},
+            "HTTP status 503",
+            id="HTTP 503",
+        ),
+        pytest.param(
+            {"exc": aiohttp.ClientConnectionError("Connection refused")},
+            "Connection refused",
+            id="connection",
+        ),
+        pytest.param(
+            {"exc": aiohttp.ClientPayloadError("Response payload is not completed")},
+            "Response payload is not completed",
+            id="payload",
+        ),
+        pytest.param({"exc": TimeoutError()}, "TimeoutError", id="timeout"),
+        pytest.param(
+            {"json": fallback_answer(TODAY, 1), "closing": True},
+            "Connection closed",
+            id="connection lost while reading",
+        ),
+    ],
+)
+async def test_both_sources_cannot_be_downloaded(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    answer: dict[str, object],
+    reason: str,
+) -> None:
+    """When the fallback fails too, its error is raised, chained to the history's."""
+    aioclient_mock.get(
+        JOUR_TEMPO_HISTORY_URL, exc=aiohttp.ClientConnectionError("No route to host")
+    )
+    aioclient_mock.get(fallback_url(TODAY), **answer)
+
+    with pytest.raises(
+        TempoConnectionError,
+        match=rf"^The Tempo color of 2026-11-11 from api-couleur-tempo\.fr could not "
+        rf"be downloaded: {re.escape(reason)}$",
+    ) as error:
+        await async_fetch_tempo_colors(async_get_clientsession(hass), [TODAY])
+
+    if "exc" in answer:
+        assert error.value.__cause__ is answer["exc"]
+    primary = [
+        str(cause)
+        for cause in exception_chain(error.value)
+        if isinstance(cause, TempoConnectionError)
+    ]
+    assert primary[1:] == [
+        "The Jour Tempo history could not be downloaded: No route to host"
+    ]
+    assert warnings(caplog) == [
+        "The Jour Tempo history could not be downloaded: No route to host; "
+        "using api-couleur-tempo.fr instead"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("history", "fallback", "error_type", "message"),
+    [
+        pytest.param(
+            {"content": b"<html></html>"},
+            {"status": HTTPStatus.INTERNAL_SERVER_ERROR},
+            TempoConnectionError,
+            "could not be downloaded: HTTP status 500",
+            id="invalid history, fallback down",
+        ),
+        pytest.param(
+            {"status": HTTPStatus.INTERNAL_SERVER_ERROR},
+            {"content": b"<html></html>"},
+            TempoDataError,
+            "is not valid JSON",
+            id="history down, invalid fallback",
+        ),
+        pytest.param(
+            {"content": b"<html></html>"},
+            {"json": fallback_answer(TOMORROW, 0)},
+            TempoDataError,
+            "is for another day: dateJour is '2026-11-12'",
+            id="both invalid",
+        ),
+    ],
+)
+async def test_both_sources_fail(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    history: dict[str, object],
+    fallback: dict[str, object],
+    error_type: type[TrveEdfError],
+    message: str,
+) -> None:
+    """The error of the fallback is raised whatever the error of the history."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, **history)
+    aioclient_mock.get(fallback_url(TODAY), **fallback)
+
+    with pytest.raises(error_type, match=re.escape(message)) as error:
+        await async_fetch_tempo_colors(async_get_clientsession(hass), [TODAY])
+
+    assert "api-couleur-tempo.fr" in str(error.value)
+    assert any(
+        str(cause).startswith("The Jour Tempo history ")
+        for cause in exception_chain(error.value)
+    )
+    assert len(warnings(caplog)) == 1
+
+
+async def test_fallback_error_gives_no_partial_colors(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """An error on one day of the fallback source discards the other days."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, status=HTTPStatus.BAD_GATEWAY)
+    aioclient_mock.get(fallback_url(YESTERDAY), json=fallback_answer(YESTERDAY, 1))
+    aioclient_mock.get(fallback_url(TODAY), json=fallback_answer(TODAY, 1))
+    aioclient_mock.get(fallback_url(TOMORROW), json=fallback_answer(TOMORROW, 5))
+
+    with pytest.raises(
+        TempoDataError,
+        match=r"^The Tempo color of 2026-11-12 from api-couleur-tempo\.fr has an "
+        r"invalid codeJour: 5$",
+    ):
+        await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert aioclient_mock.call_count == 1 + len(DAYS)
+
+
+async def test_fallback_stops_at_the_first_error(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """The days after a failed one are not asked."""
+    aioclient_mock.get(JOUR_TEMPO_HISTORY_URL, status=HTTPStatus.BAD_GATEWAY)
+    aioclient_mock.get(fallback_url(YESTERDAY), status=HTTPStatus.BAD_GATEWAY)
+    mock_fallback(aioclient_mock)
+
+    with pytest.raises(TempoConnectionError, match="HTTP status 502"):
+        await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert requested_urls(aioclient_mock) == [
+        JOUR_TEMPO_HISTORY_URL,
+        fallback_url(YESTERDAY),
+    ]
+
+
+async def test_valid_history_is_not_completed_by_the_fallback(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A valid history is the only source, even when a day is not published yet."""
+    aioclient_mock.get(
+        JOUR_TEMPO_HISTORY_URL, content=(FIXTURES / HISTORY_FIXTURE).read_bytes()
+    )
+    mock_fallback(aioclient_mock, {TOMORROW: 2})
+
+    colors = await async_fetch_tempo_colors(async_get_clientsession(hass), DAYS)
+
+    assert colors == KNOWN_COLORS
+    assert requested_urls(aioclient_mock) == [JOUR_TEMPO_HISTORY_URL]

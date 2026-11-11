@@ -60,9 +60,7 @@ def _price(key: PriceKey) -> Callable[[TrveEdfCoordinator, datetime], SensorValu
     return value
 
 
-def _tempo_color(
-    coordinator: TrveEdfCoordinator, now: datetime
-) -> SensorValue:
+def _tempo_color(coordinator: TrveEdfCoordinator, now: datetime) -> SensorValue:
     color = coordinator.tempo_color(now)
     return None if color is None else color.value
 
@@ -211,7 +209,10 @@ class TrveEdfSensor(TrveEdfEntity, SensorEntity):
         """Initialize the sensor."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
-        if description.device_class is SensorDeviceClass.ENUM and not description.options:
+        if (
+            description.device_class is SensorDeviceClass.ENUM
+            and not description.options
+        ):
             self._attr_options = [
                 period.value for period in OPTION_PERIODS[coordinator.option]
             ]

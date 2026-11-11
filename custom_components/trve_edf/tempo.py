@@ -94,9 +94,7 @@ class TempoColorsCoordinator(DataUpdateCoordinator[dict[date, TempoColor]]):
         return _recent(colors, now)
 
 
-def _recent(
-    colors: Mapping[date, TempoColor], now: datetime
-) -> dict[date, TempoColor]:
+def _recent(colors: Mapping[date, TempoColor], now: datetime) -> dict[date, TempoColor]:
     oldest = now.astimezone(PARIS).date() - COLORS_KEPT
     return {day: color for day, color in colors.items() if day >= oldest}
 

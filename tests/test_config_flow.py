@@ -114,7 +114,9 @@ async def test_tempo_contract(hass: HomeAssistant) -> None:
     assert result["step_id"] == "power"
     schema = result["data_schema"]
     assert schema is not None
-    assert [option["value"] for option in schema.schema[CONF_POWER].config["options"]] == [
+    assert [
+        option["value"] for option in schema.schema[CONF_POWER].config["options"]
+    ] == [
         "6",
         "9",
     ]
