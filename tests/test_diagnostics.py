@@ -4,23 +4,25 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
-from functools import partial
+from http import HTTPStatus
 import json
 from typing import Any
 from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.auth.models import Credentials
+
+# Home Assistant 2025.1: the download imports the Supervisor client, whose models
+# cannot be built while time is frozen. Import it before any test freezes time.
+import homeassistant.components.hassio  # noqa: F401
 from homeassistant.core import HomeAssistant
+from homeassistant.setup import async_setup_component
 import pytest
 from pytest_homeassistant_custom_component.common import (
     CLIENT_ID,
     MockConfigEntry,
     MockUser,
     async_fire_time_changed,
-)
-from pytest_homeassistant_custom_component.components.diagnostics import (
-    get_diagnostics_for_config_entry,
 )
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
@@ -56,15 +58,14 @@ def get_diagnostics(
     """
 
     async def download(entry: MockConfigEntry) -> dict[str, Any]:
+        assert await async_setup_component(hass, "diagnostics", {})
         refresh_token = await hass.auth.async_create_refresh_token(
             hass_admin_user, CLIENT_ID, credential=hass_admin_credential
         )
-        client = partial(
-            hass_client, hass.auth.async_create_access_token(refresh_token)
-        )
-        downloaded: dict[str, Any] = await get_diagnostics_for_config_entry(
-            hass, client, entry
-        )
+        client = await hass_client(hass.auth.async_create_access_token(refresh_token))
+        response = await client.get(f"/api/diagnostics/config_entry/{entry.entry_id}")
+        assert response.status == HTTPStatus.OK
+        downloaded: dict[str, Any] = (await response.json())["data"]
         direct = await async_get_config_entry_diagnostics(hass, entry)
         assert json.loads(json.dumps(direct)) == downloaded
         return downloaded

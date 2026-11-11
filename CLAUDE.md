@@ -77,6 +77,10 @@ pytest
 ```
 
 - `pytest` measures the coverage and fails below 90 %.
+- The CI also runs the tests on the oldest supported Home Assistant (2025.1). To do
+  the same locally, use a separate virtualenv outside the repository:
+  `python3.13 -m venv ../venv-ha2025.1 && ../venv-ha2025.1/bin/pip install -r requirements_test_min.txt`,
+  then `../venv-ha2025.1/bin/python -m pytest`.
 - `mypy` runs in strict mode on `custom_components`, `tests` and `.github/scripts`.
 - Validation of the integration (hassfest, HACS Action) only runs in the CI
   (`.github/workflows/validate.yml`).
