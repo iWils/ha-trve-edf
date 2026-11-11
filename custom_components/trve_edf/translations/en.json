@@ -1,5 +1,10 @@
 {
   "config": {
+    "step": {
+      "user": {
+        "description": "Set up an EDF regulated tariff (TRVE) contract."
+      }
+    },
     "abort": {
       "not_available_yet": "This integration is under development: contracts cannot be configured yet."
     }
