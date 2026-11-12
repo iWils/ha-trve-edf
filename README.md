@@ -3,14 +3,14 @@
 🇬🇧 [English version](README.en.md)
 
 > 🚧 **En développement (0.x)** : les options Base, Heures pleines / Heures creuses
-> et Tempo sont disponibles depuis la 0.2.0. La 1.0 viendra après validation en
-> conditions réelles.
+> et Tempo sont disponibles. La 1.0 sera publiée après la [recette](docs/recette.md)
+> en conditions réelles.
 
 Intégration Home Assistant qui fournit les **tarifs réglementés de vente d'électricité
 (TRVE)** d'EDF correspondant à votre contrat, et le **prix du kWh en vigueur à chaque
 instant**, à partir des données publiques officielles.
 
-## Fonctions prévues (version 1.0)
+## Fonctions
 
 - Options **Base**, **Heures pleines / Heures creuses** et **Tempo**, pour toutes les
   puissances réellement proposées.
@@ -73,9 +73,6 @@ alors retirés, et le nom que vous avez donné au contrat est conservé.
 | Couleur Tempo en cours | Tempo | Couleur de la journée Tempo en cours, de 6 h à 6 h le lendemain |
 | Couleur Tempo d'hier, d'aujourd'hui, de demain | Tempo | Celle de demain reste « Inconnu » tant qu'elle n'est pas publiée (vers 11 h) ; hier et aujourd'hui sont indisponibles si leur couleur manque |
 
-Pour le tableau de bord Énergie, choisissez « Utiliser une entité avec le prix
-actuel » et sélectionnez le capteur « Prix actuel ».
-
 Les prix sont recalculés à l'instant exact de chaque changement de période, à l'heure
 française. La grille tarifaire est téléchargée une fois par jour et enregistrée. Si elle ne peut
 plus être téléchargée, la dernière grille connue reste utilisée, y compris après un
@@ -88,6 +85,58 @@ Les couleurs Tempo viennent de Jour Tempo, qui redistribue les données de RTE, 
 une source de secours. Elles sont demandées seulement quand il en manque une
 (celle de demain, à partir de 10 h 30), enregistrées et partagées par tous les
 contrats Tempo.
+
+## Tableau de bord Énergie
+
+1. Dans Paramètres → Tableaux de bord → Énergie, ajoutez (ou modifiez) la
+   consommation du réseau électrique avec le capteur qui mesure votre consommation,
+   en kWh.
+2. Pour le coût, choisissez « Utiliser une entité avec le prix actuel » et
+   sélectionnez le capteur « Prix actuel » du contrat.
+
+Un seul capteur de consommation suffit, même en HP/HC ou en Tempo : Home Assistant
+calcule le coût à chaque mise à jour de la consommation, avec le prix en vigueur à
+cet instant. Plus le capteur de consommation se met à jour souvent, plus le coût est
+précis autour des changements de période.
+
+## Automatisations
+
+Dans les automatisations, les états des capteurs s'écrivent avec leurs valeurs
+techniques :
+
+| Capteur | États |
+|---|---|
+| Période tarifaire actuelle | `base`, `peak` (heures pleines), `off_peak` (heures creuses) |
+| Couleurs Tempo | `blue`, `white`, `red` ; `unknown` pour demain tant que la couleur n'est pas publiée |
+
+Un capteur dont la valeur n'est pas connue avec certitude est `unavailable`.
+
+Exemples, où les identifiants d'entités sont à remplacer par les vôtres (Paramètres →
+Appareils et services → Entités) :
+
+```yaml
+alias: Prévenir d'un jour rouge
+triggers:
+  - trigger: state
+    entity_id: sensor.tempo_couleur_demain
+    to: red
+actions:
+  - action: notify.notify
+    data:
+      message: Demain est un jour rouge Tempo.
+```
+
+```yaml
+alias: Chauffe-eau en heures creuses
+triggers:
+  - trigger: state
+    entity_id: sensor.hphc_periode
+    to: off_peak
+actions:
+  - action: switch.turn_on
+    target:
+      entity_id: switch.chauffe_eau
+```
 
 ## En cas de problème
 
