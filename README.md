@@ -1,4 +1,13 @@
+![Icône de l'intégration](custom_components/trve_edf/brand/icon.png)
+
 # Tarifs réglementés EDF (TRVE) pour Home Assistant
+
+[![Release](https://img.shields.io/github/v/release/iWils/ha-trve-edf)](https://github.com/iWils/ha-trve-edf/releases)
+[![Tests](https://github.com/iWils/ha-trve-edf/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/iWils/ha-trve-edf/actions/workflows/tests.yml)
+[![Validate](https://github.com/iWils/ha-trve-edf/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/iWils/ha-trve-edf/actions/workflows/validate.yml)
+[![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5)](https://hacs.xyz)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?logo=homeassistant&logoColor=white)](https://www.home-assistant.io)
+[![License](https://img.shields.io/github/license/iWils/ha-trve-edf)](https://github.com/iWils/ha-trve-edf/blob/main/LICENSE)
 
 🇬🇧 [English version](README.en.md)
 
@@ -36,10 +45,18 @@ Aucun compte n'est nécessaire et aucune donnée personnelle n'est envoyée.
 Home Assistant 2025.1 ou plus récent est nécessaire.
 
 1. Dans HACS, ajoutez `https://github.com/iWils/ha-trve-edf` comme dépôt personnalisé
-   de type « Intégration ».
+   de type « Intégration », ou utilisez ce bouton :
+
+   [![Ouvrir le dépôt dans HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=iWils&repository=ha-trve-edf&category=integration)
+
 2. Installez « Tarifs réglementés EDF (TRVE) », puis redémarrez Home Assistant.
 3. Dans Paramètres → Appareils et services, ajoutez l'intégration « Tarifs réglementés
-   EDF (TRVE) ».
+   EDF (TRVE) », ou utilisez ce bouton :
+
+   [![Ajouter l'intégration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=trve_edf)
+
+L'icône de l'intégration s'affiche dans Home Assistant à partir de la version 2026.3.
+HACS, lui, affiche une icône générique pour un dépôt personnalisé.
 
 ## Configuration
 
