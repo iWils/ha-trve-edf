@@ -1,7 +1,7 @@
 # Cahier des charges — ha-trve-edf
 
-> Statut : **validé** · Version du document : 1.1 (Tempo : sections 4.2, 6.2 et
-> 6.3) · 11 novembre 2026
+> Statut : **validé** · Version du document : 1.2 (recette : sections 9 et 10) ·
+> 12 novembre 2026
 >
 > Ce document décrit ce que fait l'intégration et comment elle est conçue. Il fait
 > référence pour tout développement, humain ou assisté par IA. Toute évolution du
@@ -240,15 +240,23 @@ custom_components/trve_edf/
 | 0.1.0 | Base et HP/HC : configuration, prix, période, abonnement |
 | 0.2.0 | Tempo : couleurs, prix du jour Tempo, sources principale et de secours |
 | 0.3.0 | Qualité : reconfiguration, diagnostics, réparations, icônes, messages d'erreur détaillés, tests sur Home Assistant 2025.1 |
-| 1.0.0 | Validation réelle côte à côte avec l'ancienne intégration, documentation |
+| 1.0.0 | Recette en conditions réelles, comparée aux sources officielles ; documentation (tableau de bord Énergie, automatisations) |
 
-## 10. Migration depuis l'intégration `tarif_edf`
+## 10. Mise en service et recette
 
-Le domain est différent (`trve_edf`) : les deux intégrations peuvent fonctionner
-côte à côte, ce qui permet de comparer les prix avant de basculer. Il n'y a pas de
-migration automatique. La procédure sera documentée : installer et configurer
-`ha-trve-edf`, choisir son capteur « Prix actuel » dans le tableau de bord Énergie,
-adapter les automatisations, puis supprimer l'ancienne intégration.
+La mise en service est documentée dans les README : installation par HACS,
+configuration du contrat, capteur « Prix actuel » comme entité de prix du tableau de
+bord Énergie, et automatisations, qui s'appuient sur les valeurs techniques des
+états (`base`, `peak`, `off_peak` ; `blue`, `white`, `red`).
+
+Avant la 1.0.0, une recette sur une vraie instance Home Assistant vérifie ce que les
+tests automatiques ne peuvent pas voir : les vraies données téléchargées, l'heure
+réelle, le tableau de bord Énergie et le comportement sur plusieurs jours. Ses
+vérifications sont listées dans [`recette.md`](recette.md). Les références sont les
+sources officielles : la grille de la CRE, la couleur Tempo publiée par RTE ou EDF,
+les heures creuses de la facture. La 1.0.0 est publiée quand toutes les
+vérifications passent sur plusieurs jours consécutifs, dont au moins un changement
+de couleur Tempo.
 
 ## 11. Conception propre
 

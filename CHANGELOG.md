@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Documentation: setting up the Energy dashboard and writing automations (states of
+  the sensors, examples), in the French and English READMEs.
+- Acceptance tests of the 1.0 on a real Home Assistant instance, compared with the
+  official sources (`docs/recette.md`, in French).
+
 ## [0.3.0] - 2026-11-11
 
 Quality.

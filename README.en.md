@@ -3,14 +3,14 @@
 🇫🇷 [Version française](README.md)
 
 > 🚧 **Under development (0.x)**: the Base, Peak / Off-peak hours and Tempo options
-> are available since 0.2.0. Version 1.0 will follow a validation in real
-> conditions.
+> are available. Version 1.0 will be released after the
+> [acceptance tests](docs/recette.md) (in French) in real conditions.
 
 Home Assistant integration that provides the EDF **regulated electricity tariffs
 (TRVE, "tarifs réglementés de vente d'électricité")** of your contract, and the
 **price of the kWh in force at any time**, from official public data.
 
-## Planned features (version 1.0)
+## Features
 
 - **Base**, **Peak / Off-peak hours (HP/HC)** and **Tempo** options, for every
   subscribed power actually offered.
@@ -72,9 +72,6 @@ removed, and the name you gave to the contract is kept.
 | Current Tempo color | Tempo | Color of the current Tempo day, from 06:00 to 06:00 the next day |
 | Yesterday's, today's, tomorrow's Tempo color | Tempo | Tomorrow's stays "Unknown" until published (around 11:00); yesterday's and today's are unavailable if missing |
 
-For the Energy dashboard, choose "Use an entity with current price" and select the
-"Current price" sensor.
-
 Prices are recomputed at the exact moment of each period change, in French time. The
 tariff grid is downloaded once a day and saved. If it cannot be downloaded anymore,
 the last known grid is still used, even after a restart, for 7 days at most after its
@@ -85,6 +82,56 @@ Tempo day is known.
 Tempo colors come from Jour Tempo, which redistributes the RTE data, with a fallback
 source. They are only asked for when one is missing (tomorrow's, from 10:30), saved
 and shared by all the Tempo contracts.
+
+## Energy dashboard
+
+1. In Settings → Dashboards → Energy, add (or edit) the electricity grid consumption
+   with the sensor that measures your consumption, in kWh.
+2. For the cost, choose "Use an entity with current price" and select the "Current
+   price" sensor of the contract.
+
+A single consumption sensor is enough, even with HP/HC or Tempo: Home Assistant
+computes the cost at each update of the consumption, with the price in force at that
+moment. The more often the consumption sensor updates, the more accurate the cost
+around period changes.
+
+## Automations
+
+In automations, the states of the sensors are written with their technical values:
+
+| Sensor | States |
+|---|---|
+| Current tariff period | `base`, `peak` (peak hours), `off_peak` (off-peak hours) |
+| Tempo colors | `blue`, `white`, `red`; `unknown` for tomorrow until the color is published |
+
+A sensor whose value is not known for sure is `unavailable`.
+
+Examples, where the entity ids are to be replaced by yours (Settings → Devices &
+services → Entities):
+
+```yaml
+alias: Warn of a red day
+triggers:
+  - trigger: state
+    entity_id: sensor.tempo_tomorrow_color
+    to: red
+actions:
+  - action: notify.notify
+    data:
+      message: Tomorrow is a red Tempo day.
+```
+
+```yaml
+alias: Water heater in off-peak hours
+triggers:
+  - trigger: state
+    entity_id: sensor.hphc_period
+    to: off_peak
+actions:
+  - action: switch.turn_on
+    target:
+      entity_id: switch.water_heater
+```
 
 ## Troubleshooting
 
