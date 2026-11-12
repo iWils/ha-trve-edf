@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the sensors, examples), in the French and English READMEs.
 - Acceptance tests of the 1.0 on a real Home Assistant instance, compared with the
   official sources (`docs/recette.md`, in French).
+- The icon of the integration at the top of the READMEs, which also tell where it is
+  shown: in Home Assistant 2026.3 or newer, while HACS shows a generic icon for a
+  custom repository.
+- Badges in the READMEs (release, tests, validation, HACS, minimum Home Assistant
+  version, license) and My Home Assistant buttons to open the repository in HACS and
+  to add the integration.
 
 ## [0.3.0] - 2026-11-11
 

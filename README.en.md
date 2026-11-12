@@ -1,4 +1,13 @@
+![Icon of the integration](custom_components/trve_edf/brand/icon.png)
+
 # EDF regulated tariffs (TRVE) for Home Assistant
+
+[![Release](https://img.shields.io/github/v/release/iWils/ha-trve-edf)](https://github.com/iWils/ha-trve-edf/releases)
+[![Tests](https://github.com/iWils/ha-trve-edf/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/iWils/ha-trve-edf/actions/workflows/tests.yml)
+[![Validate](https://github.com/iWils/ha-trve-edf/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/iWils/ha-trve-edf/actions/workflows/validate.yml)
+[![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5)](https://hacs.xyz)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?logo=homeassistant&logoColor=white)](https://www.home-assistant.io)
+[![License](https://img.shields.io/github/license/iWils/ha-trve-edf)](https://github.com/iWils/ha-trve-edf/blob/main/LICENSE)
 
 🇫🇷 [Version française](README.md)
 
@@ -36,10 +45,18 @@ No account is needed and no personal data is sent.
 Home Assistant 2025.1 or newer is required.
 
 1. In HACS, add `https://github.com/iWils/ha-trve-edf` as a custom repository of type
-   "Integration".
+   "Integration", or use this button:
+
+   [![Open the repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=iWils&repository=ha-trve-edf&category=integration)
+
 2. Install "Tarifs réglementés EDF (TRVE)", then restart Home Assistant.
 3. In Settings → Devices & services, add the "Tarifs réglementés EDF (TRVE)"
-   integration.
+   integration, or use this button:
+
+   [![Add the integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=trve_edf)
+
+The icon of the integration is shown in Home Assistant from version 2026.3. HACS
+shows a generic icon for a custom repository.
 
 ## Configuration
 

@@ -44,7 +44,8 @@ exactes de la ligne en vigueur (`grid.row_in_force`).
 ### Installation et configuration
 
 - [ ] L'intégration s'installe par HACS dans la version attendue ; son icône
-  s'affiche (Home Assistant 2026.3 ou plus récent).
+  s'affiche dans Paramètres → Appareils et services (Home Assistant 2026.3 ou plus
+  récent ; HACS affiche une icône générique pour un dépôt personnalisé).
 - [ ] La liste des puissances proposées correspond aux puissances en vigueur dans la
   grille CRE de l'option.
 - [ ] HP/HC : une saisie d'heures creuses invalide affiche un message précis ; une
